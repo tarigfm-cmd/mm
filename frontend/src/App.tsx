@@ -1,13 +1,16 @@
 import { Suspense, lazy } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
-import Navigation from '@/components/Navigation'
 import LoadingSpinner from '@/components/LoadingSpinner'
+import ProtectedRoute from '@/components/ProtectedRoute'
+import { useAuthInit } from '@/hooks/useAuthInit'
 
 const Dashboard = lazy(() => import('@/pages/Dashboard'))
 const MaterialsUpload = lazy(() => import('@/pages/MaterialsUpload'))
 const ScenariosPage = lazy(() => import('@/pages/ScenariosPage'))
 const ScenarioPage = lazy(() => import('@/pages/ScenarioPage'))
+const LoginPage = lazy(() => import('@/pages/LoginPage'))
+const RegisterPage = lazy(() => import('@/pages/RegisterPage'))
 
 function PageLoader() {
   return (
@@ -17,36 +20,41 @@ function PageLoader() {
   )
 }
 
+function AppRoutes() {
+  useAuthInit()
+
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
+
+      <Route element={<ProtectedRoute />}>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/upload" element={<MaterialsUpload />} />
+        <Route path="/scenarios" element={<ScenariosPage />} />
+        <Route path="/scenarios/:id" element={<ScenarioPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
+  )
+}
+
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen bg-gray-50">
-        <Navigation />
+      <Suspense fallback={<PageLoader />}>
+        <AppRoutes />
+      </Suspense>
 
-        <main className="ml-64 min-h-screen">
-          <div className="max-w-7xl mx-auto px-8 py-8">
-            <Suspense fallback={<PageLoader />}>
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/upload" element={<MaterialsUpload />} />
-                <Route path="/scenarios" element={<ScenariosPage />} />
-                <Route path="/scenarios/:id" element={<ScenarioPage />} />
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </Suspense>
-          </div>
-        </main>
-
-        <Toaster
-          position="top-right"
-          toastOptions={{
-            duration: 4000,
-            style: { fontSize: '0.875rem' },
-            success: { iconTheme: { primary: '#16a34a', secondary: '#fff' } },
-            error: { iconTheme: { primary: '#dc2626', secondary: '#fff' } },
-          }}
-        />
-      </div>
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          duration: 4000,
+          style: { fontSize: '0.875rem' },
+          success: { iconTheme: { primary: '#16a34a', secondary: '#fff' } },
+          error: { iconTheme: { primary: '#dc2626', secondary: '#fff' } },
+        }}
+      />
     </BrowserRouter>
   )
 }

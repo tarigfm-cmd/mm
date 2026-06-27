@@ -1,47 +1,130 @@
-import axios, { AxiosError, type AxiosInstance } from 'axios'
+import axios, { AxiosError, type AxiosInstance, type InternalAxiosRequestConfig } from 'axios'
 import toast from 'react-hot-toast'
+import { useAppStore } from '@/store/appStore'
 import type {
   GenerateScenarioRequest,
   Interaction,
+  LoginRequest,
   MaterialDetail,
   MaterialListResponse,
+  RegisterRequest,
   Scenario,
   ScenarioInteractionsResponse,
   ScenarioListResponse,
   SubmitAnswerRequest,
+  TokenResponse,
+  UserRead,
 } from '@/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const BASE_URL = (import.meta as any).env?.VITE_API_URL ?? ''
 
+// ── Refresh token storage (localStorage) ─────────────────────────────────────
+
+const RT_KEY = 'pharmlearn_rt'
+
+export function getRefreshToken(): string | null {
+  return localStorage.getItem(RT_KEY)
+}
+
+export function setStoredRefreshToken(token: string): void {
+  localStorage.setItem(RT_KEY, token)
+}
+
+export function clearStoredRefreshToken(): void {
+  localStorage.removeItem(RT_KEY)
+}
+
+// ── Axios instance ────────────────────────────────────────────────────────────
+
 const http: AxiosInstance = axios.create({
   baseURL: BASE_URL,
-  timeout: 120_000, // 2 min — AI calls can take time
+  timeout: 120_000,
   headers: { 'Content-Type': 'application/json' },
 })
 
-// ── Request interceptor: attach session ID ────────────────────────────────────
+// Separate instance for token refresh — no interceptors to avoid loops
+const authHttp = axios.create({ baseURL: BASE_URL, timeout: 30_000 })
+
+// ── Request interceptor: attach access token + session ID ─────────────────────
+
 http.interceptors.request.use((config) => {
-  const sessionId = getOrCreateSessionId()
-  config.headers['X-Session-Id'] = sessionId
+  const { accessToken } = useAppStore.getState()
+  if (accessToken) {
+    config.headers.Authorization = `Bearer ${accessToken}`
+  }
+  config.headers['X-Session-Id'] = getOrCreateSessionId()
   return config
 })
 
-// ── Response interceptor: surface errors as toasts ────────────────────────────
+// ── Response interceptor: silent token refresh on 401 ────────────────────────
+
+let _isRefreshing = false
+let _pendingCallbacks: Array<(token: string) => void> = []
+
 http.interceptors.response.use(
   (response) => response,
-  (error: AxiosError<{ detail: string }>) => {
-    const message =
-      error.response?.data?.detail ?? error.message ?? 'An unexpected error occurred.'
-    const detail = typeof message === 'string' ? message : JSON.stringify(message)
-    if (error.response?.status !== 404) {
+  async (error: AxiosError<{ detail: string }>) => {
+    const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
+    const status = error.response?.status
+
+    // Attempt silent refresh on 401, but not for auth endpoints or retried requests
+    if (
+      status === 401 &&
+      !original._retry &&
+      original.url &&
+      !original.url.includes('/api/auth/')
+    ) {
+      original._retry = true
+
+      if (_isRefreshing) {
+        return new Promise<string>((resolve) => _pendingCallbacks.push(resolve)).then((token) => {
+          original.headers.Authorization = `Bearer ${token}`
+          return http(original)
+        })
+      }
+
+      _isRefreshing = true
+      try {
+        const rt = getRefreshToken()
+        if (!rt) throw new Error('no refresh token')
+
+        const { data } = await authHttp.post<TokenResponse>('/api/auth/refresh', {
+          refresh_token: rt,
+        })
+
+        useAppStore.getState().setAccessToken(data.access_token)
+        setStoredRefreshToken(data.refresh_token)
+
+        _pendingCallbacks.forEach((cb) => cb(data.access_token))
+        _pendingCallbacks = []
+
+        original.headers.Authorization = `Bearer ${data.access_token}`
+        return http(original)
+      } catch {
+        _pendingCallbacks = []
+        useAppStore.getState().clearAuth()
+        clearStoredRefreshToken()
+        window.location.replace('/login')
+        return Promise.reject(error)
+      } finally {
+        _isRefreshing = false
+      }
+    }
+
+    // Surface errors as toasts (skip 401 and 404)
+    if (status !== 401 && status !== 404) {
+      const message = error.response?.data?.detail ?? error.message ?? 'An unexpected error occurred.'
+      const detail = typeof message === 'string' ? message : JSON.stringify(message)
       toast.error(detail, { duration: 5000 })
     }
+
     return Promise.reject(error)
   },
 )
 
 // ── Session management ────────────────────────────────────────────────────────
+
 export function getOrCreateSessionId(): string {
   const key = 'pharmacy_ai_session_id'
   let id = localStorage.getItem(key)
@@ -50,6 +133,47 @@ export function getOrCreateSessionId(): string {
     localStorage.setItem(key, id)
   }
   return id
+}
+
+// ── Auth API ──────────────────────────────────────────────────────────────────
+
+export const authApi = {
+  register: async (data: RegisterRequest): Promise<UserRead> => {
+    const { data: user } = await http.post<UserRead>('/api/auth/register', data)
+    return user
+  },
+
+  login: async (credentials: LoginRequest): Promise<TokenResponse> => {
+    const { data } = await http.post<TokenResponse>('/api/auth/login', credentials)
+    useAppStore.getState().setAccessToken(data.access_token)
+    setStoredRefreshToken(data.refresh_token)
+    return data
+  },
+
+  refresh: async (refreshToken: string): Promise<TokenResponse> => {
+    const { data } = await authHttp.post<TokenResponse>('/api/auth/refresh', {
+      refresh_token: refreshToken,
+    })
+    return data
+  },
+
+  me: async (): Promise<UserRead> => {
+    const { data } = await http.get<UserRead>('/api/auth/me')
+    return data
+  },
+
+  logout: async (): Promise<void> => {
+    const rt = getRefreshToken()
+    if (rt) {
+      try {
+        await http.post('/api/auth/logout', { refresh_token: rt })
+      } catch {
+        // best-effort
+      }
+    }
+    useAppStore.getState().clearAuth()
+    clearStoredRefreshToken()
+  },
 }
 
 // ── Materials API ─────────────────────────────────────────────────────────────
@@ -137,6 +261,7 @@ export const scenariosApi = {
 }
 
 // ── Health API ────────────────────────────────────────────────────────────────
+
 export const healthApi = {
   check: async (): Promise<{ status: string; version: string }> => {
     const { data } = await http.get('/api/health')

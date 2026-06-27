@@ -1,15 +1,13 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
-import type { Material, Scenario, Interaction } from '@/types'
+import type { Material, Scenario, Interaction, UserRead } from '@/types'
 
-/**
- * Platform-wide Zustand store.
- *
- * Phase 1 holds content (materials) and learning (scenarios/interactions).
- * Future slices — users, assessments, analytics, OSCE, games — will be
- * added here or in dedicated sibling stores as the platform grows.
- */
 interface AppState {
+  // Auth
+  currentUser: UserRead | null
+  accessToken: string | null
+  authInitialized: boolean
+
   // Content
   materials: Material[]
   materialsTotal: number
@@ -25,6 +23,12 @@ interface AppState {
   currentInteractions: Interaction[]
   interactionsLoading: boolean
   answerSubmitting: boolean
+
+  // Actions — auth
+  setCurrentUser: (user: UserRead | null) => void
+  setAccessToken: (token: string | null) => void
+  setAuthInitialized: (v: boolean) => void
+  clearAuth: () => void
 
   // Actions — content
   setMaterials: (items: Material[], total: number) => void
@@ -48,6 +52,10 @@ interface AppState {
 export const useAppStore = create<AppState>()(
   devtools(
     (set) => ({
+      currentUser: null,
+      accessToken: null,
+      authInitialized: false,
+
       materials: [],
       materialsTotal: 0,
       materialsLoading: false,
@@ -60,6 +68,11 @@ export const useAppStore = create<AppState>()(
       currentInteractions: [],
       interactionsLoading: false,
       answerSubmitting: false,
+
+      setCurrentUser: (user) => set({ currentUser: user }),
+      setAccessToken: (token) => set({ accessToken: token }),
+      setAuthInitialized: (v) => set({ authInitialized: v }),
+      clearAuth: () => set({ currentUser: null, accessToken: null }),
 
       setMaterials: (items, total) => set({ materials: items, materialsTotal: total }),
       setMaterialsLoading: (v) => set({ materialsLoading: v }),

@@ -26,6 +26,7 @@ from app.schemas.identity import (
     TokenResponse,
     UserCreate,
     UserRead,
+    UserUpdate,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -194,6 +195,33 @@ async def refresh_tokens(
 async def get_me(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> UserRead:
+    return UserRead.model_validate(current_user)
+
+
+@router.patch(
+    "/me",
+    response_model=UserRead,
+    summary="Update the current user's profile",
+)
+async def update_me(
+    body: UserUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db),
+) -> UserRead:
+    if body.username is not None and body.username != current_user.username:
+        existing = await db.execute(select(User).where(User.username == body.username))
+        if existing.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This username is already taken.",
+            )
+        current_user.username = body.username
+
+    if body.full_name is not None:
+        current_user.full_name = body.full_name
+
+    await db.commit()
+    await db.refresh(current_user)
     return UserRead.model_validate(current_user)
 
 
