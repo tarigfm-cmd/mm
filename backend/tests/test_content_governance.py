@@ -590,14 +590,16 @@ async def test_list_due_for_review(client: AsyncClient, fresh_engine):
 
 
 @pytest.mark.asyncio
-async def test_import_preview_returns_501(client: AsyncClient, fresh_engine):
+async def test_import_preview_requires_file(client: AsyncClient, fresh_engine):
+    """Import preview is now implemented — calling without a file returns 422."""
     token = await _admin_token(client, fresh_engine)
     resp = await client.post("/api/content/import/preview", headers=_auth(token))
-    assert resp.status_code == 501
+    assert resp.status_code == 422  # missing required 'file' field
 
 
 @pytest.mark.asyncio
-async def test_import_commit_returns_501(client: AsyncClient, fresh_engine):
+async def test_import_commit_requires_file(client: AsyncClient, fresh_engine):
+    """Import commit is now implemented — calling without a file returns 422."""
     token = await _admin_token(client, fresh_engine)
     resp = await client.post("/api/content/import/commit", headers=_auth(token))
-    assert resp.status_code == 501
+    assert resp.status_code == 422  # missing required 'file' field

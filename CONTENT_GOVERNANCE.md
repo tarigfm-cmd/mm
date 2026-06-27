@@ -220,12 +220,51 @@ Content governance uses **platform-scoped RBAC**: a user needs the required perm
 | `POST` | `/api/content/approval-batches` | Create an approval batch |
 | `GET` | `/api/content/approval-batches` | List approval batches |
 
-### Bulk Import (Stubs)
+### Bulk CSV/ZIP Import
 
-| Method | Path | Status |
-|--------|------|--------|
-| `POST` | `/api/content/import/preview` | 501 Not Implemented |
-| `POST` | `/api/content/import/commit` | 501 Not Implemented |
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/content/import/preview` | Validate a CSV or ZIP without writing governance records |
+| `POST` | `/api/content/import/commit` | Commit validated content into governance tables |
+
+Both endpoints accept multipart/form-data with a `file` field (`.csv` or `.zip`).
+`/commit` additionally accepts an optional `approval_batch_id` form field (UUID).
+
+#### Supported files
+
+| Filename | Content produced |
+|----------|-----------------|
+| `case_bank_7500.csv` | `ContentItem` + `ContentVersion` (type `case`) |
+| `simulation_blueprints_1200.csv` | `ContentItem` + `ContentVersion` (type `simulation`) |
+| `osce_stations_400.csv` | `ContentItem` + `ContentVersion` (type `osce`) |
+| `prescription_screening_1200.csv` | `ContentItem` + `ContentVersion` (type `rx_screening`) |
+| `drills_1200.csv` | `ContentItem` + `ContentVersion` (type `drill`) |
+| `evidence_library.csv` | `EvidenceSource` records |
+| `localization_rules.csv` | `RegionPublishingRule` records (`is_active=False`) |
+| `games_rewards.csv`, `taxonomy.csv`, `audit_checklist.csv` | Reference-only (row count reported, no DB writes) |
+
+#### Validation rules
+
+- **Region**: `region_localization` must be one of `UK`, `US`, `GCC`, `Australia` (normalized to `AU`). `GLOBAL` is not accepted for learner content.
+- **Required columns**: missing headers are reported as file-level errors; blank required values are row-level errors.
+- **Difficulty**: `difficulty_1_5` must be 1–5 if present.
+- **Duplicate detection**: within-upload duplicates (by `external_id` and content hash) are tracked and reported; on `/commit` they are skipped (not errored). DB duplicates (existing `external_id` or identical content hash) are similarly skipped.
+- **Row limit**: 10,000 rows per file. Files exceeding this are rejected.
+- **Size limit**: 200 MB compressed; 600 MB uncompressed (ZIP).
+
+#### Approval and status
+
+- Imported content is **never auto-published**. All items land in `pending_review` status.
+- If a row's `review_status` matches `team-approved`, `clinically_approved`, `approved`, `pharmacist_approved`, `human_approved`, or `reviewer_approved`, **and** the actor holds `content.approve`, the item receives `clinically_approved` status.
+- An `approval_batch_id` may be provided to link the import to a pre-created `ApprovalBatch`.
+
+#### Security controls
+
+- Path traversal in ZIP entries is rejected.
+- Nested ZIP files are rejected.
+- Only filenames in the allowed set are accepted inside a ZIP.
+- The audit log records only safe metadata (`source_file`, counts). No clinical payload is logged.
+- The Excel dashboard (`community_pharmacy_mega_content_bank_v2_dashboard.xlsx`) is a human-readable reference only and is **never imported into the database**.
 
 ### Evidence Sources
 
@@ -282,7 +321,6 @@ The Alembic migration replicates this by calling `op.create_foreign_key(...)` af
 
 ## Known Limitations
 
-- **Bulk import not implemented.** `POST /api/content/import/preview` and `/commit` return 501. The `external_id`, `source_file_name`, and `source_row_number` fields on models are reserved for the upcoming import pipeline.
 - **Evidence region enforcement is coarse.** The publish gate checks that *any* active evidence source exists for `required_evidence_region` — it does not verify that the evidence is linked to the specific content item being published.
 - **RegionPublishingRule `required_review_roles`** is stored in JSON but not yet enforced at publish time. The field is reserved for future multi-role review gate logic.
 - **`requires_local_disclaimer` / `requires_protocol_note`** are stored but not injected into the published payload — enforcement is deferred to the content rendering layer.

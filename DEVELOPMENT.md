@@ -93,6 +93,18 @@ pytest tests/ -v
 
 Tests use an in-memory SQLite database — no PostgreSQL or Redis required.
 
+#### Import pipeline tests
+
+```bash
+# Run only the import pipeline test suite
+pytest tests/test_import_pipeline.py -v
+
+# Run a specific test
+pytest tests/test_import_pipeline.py::test_preview_single_csv_success -v
+```
+
+The import tests use small synthetic CSV data generated in-memory. The real content bank ZIP is never required. Each test gets a fully isolated in-memory database via the `fresh_engine` fixture.
+
 ### Frontend TypeScript check
 
 ```bash

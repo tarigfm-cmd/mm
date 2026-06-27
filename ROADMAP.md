@@ -62,9 +62,16 @@ Goal: Production-grade content lifecycle management before learner-facing featur
 - [x] Multi-region publishing: per-region publication records; `GET /api/content/published?region=UK`
 - [x] 9 audit events for all governance writes
 - [x] Analytics: failure hotspots, per-item failure summary, org weakness map
-- [x] Import stubs: `/api/content/import/preview` and `/api/content/commit` return 501
-- [x] 32 integration tests (139 total, all passing)
-- [x] `CONTENT_GOVERNANCE.md` — full API reference and data model documentation
+- [x] Bulk CSV/ZIP import pipeline: `ImportBatch` + `ImportRowError` models, Alembic migration 006
+- [x] `POST /api/content/import/preview` — validate CSV/ZIP, detect duplicates, report errors without DB writes
+- [x] `POST /api/content/import/commit` — create `ContentItem`, `ContentVersion`, `EvidenceSource`, `RegionPublishingRule`, `ImportBatch`
+- [x] Security controls: path traversal rejection, nested ZIP rejection, 200 MB upload / 600 MB uncompressed limits, 10k row limit
+- [x] RBAC: `content.import` for preview/commit; `content.approve` required to set `clinically_approved` status on import
+- [x] Duplicate detection: within-upload (external_id + hash) and against DB; duplicates skipped, not errored
+- [x] Never auto-publishes imported content; all items land in `pending_review` (or `clinically_approved` if reviewer and approved status)
+- [x] Audit log writes only safe metadata — no clinical payload logged
+- [x] 49 import pipeline tests (209 total, all passing)
+- [x] `CONTENT_GOVERNANCE.md` — updated with full import API reference, validation rules, security constraints
 
 ## Phase 2 — Users & Auth (continued)
 
@@ -101,7 +108,7 @@ Goal: Institutional-grade content quality and governance.
 
 - [ ] Evidence-based content review workflow
 - [ ] Content versioning with reviewer approval gates
-- [ ] CSV bulk content import for educators
+- [x] CSV bulk content import for educators (implemented in Phase 1 milestone)
 - [ ] Medical content tagging (BNF chapter, NICE guideline, MHRA alert)
 - [ ] Evidence source linking (PubMed, NICE, BNF)
 - [ ] Educator content studio (create custom cases)

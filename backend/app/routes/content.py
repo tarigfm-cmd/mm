@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +28,8 @@ from app.models.governance import (
     PublicationRecord,
     RegionPublishingRule,
 )
+from app.schemas.import_schema import CommitResult, PreviewResult
+from app.services import import_service
 from app.models.identity import User
 from app.schemas.governance import (
     ApprovalBatchCreate,
@@ -660,19 +662,52 @@ async def list_published(
 
 
 # ---------------------------------------------------------------------------
-# Import stubs (Phase 4 bulk import — not yet implemented)
+# Bulk import: preview and commit
 # ---------------------------------------------------------------------------
 
 
-@router.post("/import/preview", status_code=status.HTTP_501_NOT_IMPLEMENTED)
+@router.post("/import/preview", response_model=PreviewResult)
 async def import_preview(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_permission("content.import")),
 ):
-    raise HTTPException(status_code=501, detail="Bulk import not yet implemented")
+    """Validate a CSV or ZIP package without creating any governance records."""
+    file_bytes = await file.read()
+    file_name = file.filename or "upload"
+    try:
+        return await import_service.preview_package(file_bytes, file_name, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
-@router.post("/import/commit", status_code=status.HTTP_501_NOT_IMPLEMENTED)
+@router.post("/import/commit", response_model=CommitResult, status_code=status.HTTP_201_CREATED)
 async def import_commit(
+    file: UploadFile = File(...),
+    approval_batch_id: Optional[uuid.UUID] = Form(None),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_permission("content.import")),
 ):
-    raise HTTPException(status_code=501, detail="Bulk import not yet implemented")
+    """
+    Commit a validated CSV or ZIP package into governance tables.
+
+    - Requires content.import permission.
+    - Rows marked as clinically_approved require content.approve permission AND approval_batch_id.
+    - Never auto-publishes imported content.
+    """
+    from app.core.dependencies import check_content_permission
+
+    file_bytes = await file.read()
+    file_name = file.filename or "upload"
+    has_approve = await check_content_permission("content.approve", current_user, db)
+    try:
+        return await import_service.commit_package(
+            file_bytes=file_bytes,
+            file_name=file_name,
+            db=db,
+            actor=current_user,
+            approval_batch_id=approval_batch_id,
+            has_approve_permission=has_approve,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))

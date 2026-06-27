@@ -456,3 +456,85 @@ class LearnerFailureAnalytics(Base):
     content_item: Mapped["ContentItem"] = relationship(
         "ContentItem", back_populates="failure_analytics"
     )
+
+
+# ---------------------------------------------------------------------------
+# ImportBatch
+# ---------------------------------------------------------------------------
+
+class ImportBatch(Base):
+    """Tracks a single bulk import operation for audit and traceability."""
+
+    __tablename__ = "import_batches"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True, native_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    source_file_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    package_type: Mapped[str] = mapped_column(String(20), nullable=False)  # "csv" or "zip"
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="previewed")
+    uploaded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True, native_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    approval_batch_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True, native_uuid=True),
+        ForeignKey("approval_batches.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    total_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    valid_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    invalid_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_items: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_versions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_evidence_sources: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_region_rules: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_duplicates: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    warnings_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    errors_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    manifest_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    uploader: Mapped[Optional["User"]] = relationship(  # noqa: F821
+        "User", foreign_keys=[uploaded_by_user_id]
+    )
+    row_errors: Mapped[list["ImportRowError"]] = relationship(
+        "ImportRowError", back_populates="import_batch", cascade="all, delete-orphan"
+    )
+
+
+# ---------------------------------------------------------------------------
+# ImportRowError
+# ---------------------------------------------------------------------------
+
+class ImportRowError(Base):
+    """Per-row error record created during commit for import traceability."""
+
+    __tablename__ = "import_row_errors"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True, native_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    import_batch_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True, native_uuid=True),
+        ForeignKey("import_batches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    file_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    row_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, default="error")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    import_batch: Mapped["ImportBatch"] = relationship(
+        "ImportBatch", back_populates="row_errors"
+    )

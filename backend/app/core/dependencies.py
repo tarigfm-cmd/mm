@@ -212,6 +212,29 @@ def require_content_permission(permission_name: str):
     return _check
 
 
+async def check_content_permission(
+    permission_name: str,
+    user,
+    db: AsyncSession,
+) -> bool:
+    """Return True if the user holds permission_name in any active org (non-raising)."""
+    if user.is_superuser:
+        return True
+    from app.models.identity import OrganizationMembership, Permission, RolePermission
+    result = await db.execute(
+        select(Permission)
+        .join(RolePermission, RolePermission.permission_id == Permission.id)
+        .join(OrganizationMembership, OrganizationMembership.role_id == RolePermission.role_id)
+        .where(
+            OrganizationMembership.user_id == user.id,
+            OrganizationMembership.is_active.is_(True),
+            Permission.name == permission_name,
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
 def has_permission(permission_name: str):
     """
     Return a dependency that checks whether the current user's role (within
