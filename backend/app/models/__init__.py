@@ -11,6 +11,16 @@ from app.models.identity import (
     RolePermission,
     User,
 )
+from app.models.governance import (
+    ApprovalBatch,
+    ClinicalReview,
+    ContentItem,
+    ContentVersion,
+    EvidenceSource,
+    LearnerFailureAnalytics,
+    PublicationRecord,
+    RegionPublishingRule,
+)
 from app.models.learning import Interaction, Scenario
 
 __all__ = [
@@ -28,4 +38,13 @@ __all__ = [
     "RolePermission",
     "RefreshToken",
     "AuditLog",
+    # Governance
+    "ContentItem",
+    "ContentVersion",
+    "EvidenceSource",
+    "ApprovalBatch",
+    "ClinicalReview",
+    "RegionPublishingRule",
+    "PublicationRecord",
+    "LearnerFailureAnalytics",
 ]

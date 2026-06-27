@@ -43,6 +43,29 @@ Goal: Fix documented architectural debt before building new modules.
 - [x] Organization PATCH uses `OrganizationUpdate` with all-optional fields (was requiring all fields)
 - [x] Expired/revoked refresh tokens pruned per-user on login and token refresh
 
+## Evidence-Based Content Governance Foundation (Complete)
+
+Goal: Production-grade content lifecycle management before learner-facing features go live.
+
+- [x] `ContentItem` model — unified parent for all educational content types (8 content types)
+- [x] `ContentVersion` — immutable snapshot with SHA-256 content hash; circular FK via `use_alter=True`
+- [x] `EvidenceSource` — tracked external clinical evidence with `next_review_due_at` scheduling
+- [x] `ApprovalBatch` — bulk external-reviewer sign-off records with manifest hash
+- [x] `ClinicalReview` — per-item pharmacist approval; `approved / approved_with_conditions / rejected / needs_revision`
+- [x] `RegionPublishingRule` — per-region, per-content-type publishing requirements
+- [x] `PublicationRecord` — tracks where/when content was published per region
+- [x] `LearnerFailureAnalytics` — content-version-aware failure type tracking (6 failure dimensions)
+- [x] Alembic migration 004 — all 8 governance tables
+- [x] Full RBAC enforcement: learners see only published content; write operations require `is_superuser`
+- [x] Publish gate: requires version + at least one approved clinical review
+- [x] Rollback: creates new immutable version copied from target
+- [x] Multi-region publishing: per-region publication records; `GET /api/content/published?region=UK`
+- [x] 9 audit events for all governance writes
+- [x] Analytics: failure hotspots, per-item failure summary, org weakness map
+- [x] Import stubs: `/api/content/import/preview` and `/api/content/commit` return 501
+- [x] 32 integration tests (139 total, all passing)
+- [x] `CONTENT_GOVERNANCE.md` — full API reference and data model documentation
+
 ## Phase 2 — Users & Auth (continued)
 
 Goal: Full user-facing auth and profile features.

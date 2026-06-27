@@ -24,10 +24,11 @@
 │  ├── /api/health                   ├── assessments/                │
 │  ├── /api/auth/*                   ├── osce/                       │
 │  ├── /api/materials/*              ├── games/                      │
-│  ├── /api/scenarios/*              ├── analytics/                  │
-│  ├── /api/orgs/*                   ├── subscriptions/              │
-│  ├── /api/roles                    └── content_review/             │
-│  └── /api/progress                                                 │
+│  ├── /api/scenarios/*              └── subscriptions/              │
+│  ├── /api/orgs/*                                                   │
+│  ├── /api/roles                    Content Governance (Phase 4)    │
+│  ├── /api/progress                 ├── /api/content/*              │
+│  └── /api/evidence/*               └── /api/analytics/*            │
 │                                                                    │
 │  Services                                                          │
 │  ├── ai_service.py (Claude — scenario gen + answer eval)           │
@@ -154,6 +155,7 @@ Admin operations within an org require `institution_admin` or `platform_admin` m
 | 001 | initial_schema | materials, scenarios, interactions |
 | 002 | identity_rbac | users, organizations, roles, permissions, role_permissions, organization_memberships, refresh_tokens, audit_logs |
 | 003 | interaction_user_id | adds `user_id` FK column to interactions |
+| 004 | content_governance | content_items, content_versions, evidence_sources, approval_batches, clinical_reviews, region_publishing_rules, publication_records, learner_failure_analytics |
 
 **Important**: Migrations use `postgresql.UUID` and `postgresql.JSON` — they target PostgreSQL only. Application models use `sqlalchemy.Uuid(as_uuid=True, native_uuid=True)` (cross-DB) so tests can run on SQLite in-memory databases via `Base.metadata.create_all`.
 
@@ -190,6 +192,15 @@ http interceptor (on 401 from any non-auth endpoint):
 | `org.member_added` | Member added (or re-activated) |
 | `org.member_role_updated` | Member's role changed |
 | `org.member_removed` | Member deactivated |
+| `content.item_created` | Content item created |
+| `content.version_created` | New version added to item |
+| `content.version_rollback` | Version rollback performed |
+| `content.review_created` | Clinical review submitted |
+| `content.published` | Item published to a region |
+| `content.unpublished` | Item unpublished from a region |
+| `content.approval_batch_created` | Approval batch recorded |
+| `content.evidence_source_created` | Evidence source added |
+| `content.evidence_source_updated` | Evidence source fields updated |
 
 **Fields stored:** `user_id` (actor), `organization_id` (where relevant), `action`, `resource_type`, `resource_id`, `extra_data` (safe metadata — never passwords or raw token values), `ip_address`, `created_at`.
 

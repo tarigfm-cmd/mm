@@ -13,7 +13,10 @@ from slowapi.util import get_remote_address
 
 from app.config import get_settings
 from app.database import Base, engine
+from app.routes import analytics as analytics_router
 from app.routes import auth as auth_router
+from app.routes import content as content_router
+from app.routes import evidence as evidence_router
 from app.routes import health as health_router
 from app.routes import materials as materials_router
 from app.routes import organizations as orgs_router
@@ -79,6 +82,9 @@ app.include_router(scenarios_router.router)
 app.include_router(orgs_router.router)
 app.include_router(orgs_router.roles_router)
 app.include_router(progress_router.router)
+app.include_router(content_router.router)
+app.include_router(evidence_router.router)
+app.include_router(analytics_router.router)
 
 
 @app.exception_handler(Exception)
