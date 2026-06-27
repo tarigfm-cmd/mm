@@ -1,26 +1,32 @@
 """Content governance routes: items, versions, reviews, publishing, batches."""
 import hashlib
+import math
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from app.core.dependencies import get_current_user, require_superuser
+from app.core.dependencies import (
+    get_current_user,
+    has_permission,
+    require_content_permission,
+    require_superuser,
+)
 from app.database import get_db
 from app.models.governance import (
-    CONTENT_STATUSES,
     CONTENT_TYPES,
+    CONTENT_STATUSES,
     REGION_CODES,
-    REVIEW_DECISIONS,
     ApprovalBatch,
     ClinicalReview,
     ContentItem,
     ContentVersion,
+    EvidenceSource,
     PublicationRecord,
+    RegionPublishingRule,
 )
 from app.models.identity import User
 from app.schemas.governance import (
@@ -62,17 +68,77 @@ async def _get_item_or_404(item_id: uuid.UUID, db: AsyncSession) -> ContentItem:
     return row
 
 
+async def _enforce_region_rules(
+    item: ContentItem,
+    region_code: str,
+    current_version: Optional[ContentVersion],
+    db: AsyncSession,
+) -> None:
+    """Block publish if an active RegionPublishingRule is violated."""
+    rule_result = await db.execute(
+        select(RegionPublishingRule).where(
+            RegionPublishingRule.region_code == region_code,
+            RegionPublishingRule.is_active.is_(True),
+            or_(
+                RegionPublishingRule.content_type.is_(None),
+                RegionPublishingRule.content_type == item.content_type,
+            ),
+        ).limit(1)
+    )
+    rule = rule_result.scalars().first()
+    if rule is None:
+        return
+
+    # Check allowed statuses
+    if rule.allowed_statuses and item.status not in rule.allowed_statuses:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Region rule for {region_code} requires item status in "
+                f"{rule.allowed_statuses}; current status is '{item.status}'"
+            ),
+        )
+
+    # Check required evidence region (only if version has evidence_ids)
+    if rule.required_evidence_region and current_version and current_version.evidence_ids:
+        try:
+            evidence_uuids = [uuid.UUID(eid) for eid in current_version.evidence_ids]
+        except (ValueError, TypeError):
+            evidence_uuids = []
+
+        if evidence_uuids:
+            count = await db.scalar(
+                select(func.count(EvidenceSource.id)).where(
+                    EvidenceSource.id.in_(evidence_uuids),
+                    EvidenceSource.region == rule.required_evidence_region,
+                    EvidenceSource.evidence_status.notin_(["retired", "superseded"]),
+                )
+            )
+            if (count or 0) == 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Region rule for {region_code} requires at least one active "
+                        f"evidence source from region '{rule.required_evidence_region}'"
+                    ),
+                )
+
+
 # ---------------------------------------------------------------------------
 # Approval Batches
 # ---------------------------------------------------------------------------
 
 
-@router.post("/approval-batches", response_model=ApprovalBatchRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/approval-batches",
+    response_model=ApprovalBatchRead,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_approval_batch(
     body: ApprovalBatchCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_superuser),
+    current_user: User = Depends(require_content_permission("content.approve")),
 ):
     batch = ApprovalBatch(
         **body.model_dump(),
@@ -97,7 +163,7 @@ async def create_approval_batch(
 @router.get("/approval-batches", response_model=list[ApprovalBatchRead])
 async def list_approval_batches(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_superuser),
+    current_user: User = Depends(require_content_permission("content.review")),
 ):
     result = await db.execute(
         select(ApprovalBatch).order_by(ApprovalBatch.approved_at.desc())
@@ -115,7 +181,7 @@ async def create_content_item(
     body: ContentItemCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_superuser),
+    current_user: User = Depends(require_content_permission("content.import")),
 ):
     item = ContentItem(
         **body.model_dump(),
@@ -145,13 +211,12 @@ async def list_content_items(
     content_type: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     domain: Optional[str] = Query(None),
-    region: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     q = select(ContentItem)
 
-    # Learners can only see published content
+    # Learners can only see published content; admins can filter by any status
     if not current_user.is_superuser:
         q = q.where(ContentItem.status == "published")
     elif status:
@@ -168,12 +233,13 @@ async def list_content_items(
 
     count_result = await db.execute(select(func.count()).select_from(q.subquery()))
     total = count_result.scalar_one()
-
-    offset = (page - 1) * per_page
-    rows = (await db.execute(q.order_by(ContentItem.created_at.desc()).offset(offset).limit(per_page))).scalars().all()
-
-    import math
     pages = math.ceil(total / per_page) if per_page else 1
+    offset = (page - 1) * per_page
+    rows = (
+        await db.execute(
+            q.order_by(ContentItem.created_at.desc()).offset(offset).limit(per_page)
+        )
+    ).scalars().all()
 
     return ContentItemListResponse(
         items=[ContentItemListItem.model_validate(r) for r in rows],
@@ -205,7 +271,7 @@ async def get_content_item(
 async def list_versions(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_superuser),
+    current_user: User = Depends(require_content_permission("content.review")),
 ):
     await _get_item_or_404(item_id, db)
     result = await db.execute(
@@ -216,23 +282,28 @@ async def list_versions(
     return result.scalars().all()
 
 
-@router.post("/items/{item_id}/versions", response_model=ContentVersionRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/items/{item_id}/versions",
+    response_model=ContentVersionRead,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_version(
     item_id: uuid.UUID,
     body: ContentVersionCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_superuser),
+    current_user: User = Depends(require_content_permission("content.version.create")),
 ):
     item = await _get_item_or_404(item_id, db)
 
-    # Determine next version number
+    if item.status == "retired":
+        raise HTTPException(status_code=409, detail="Cannot add versions to a retired content item")
+
     count_result = await db.execute(
         select(func.count(ContentVersion.id)).where(ContentVersion.content_item_id == item_id)
     )
     next_number = (count_result.scalar_one() or 0) + 1
 
-    # Mark all existing versions as not current
     await db.execute(
         update(ContentVersion)
         .where(ContentVersion.content_item_id == item_id)
@@ -255,9 +326,12 @@ async def create_version(
     db.add(version)
     await db.flush()
 
-    # Update item's current_version_id
     item.current_version_id = version.id
-    item.status = "pending_review" if item.status == "draft" else item.status
+    # Track status lifecycle: published → needs_update; draft → pending_review
+    if item.status == "published":
+        item.status = "needs_update"
+    elif item.status in ("draft", "imported"):
+        item.status = "pending_review"
     item.updated_at = datetime.now(timezone.utc)
 
     await log_action(
@@ -274,21 +348,27 @@ async def create_version(
     return version
 
 
-@router.post("/items/{item_id}/versions/rollback/{version_id}", response_model=ContentVersionRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/items/{item_id}/versions/rollback/{version_id}",
+    response_model=ContentVersionRead,
+    status_code=status.HTTP_201_CREATED,
+)
 async def rollback_version(
     item_id: uuid.UUID,
     version_id: uuid.UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_superuser),
+    current_user: User = Depends(require_content_permission("content.rollback")),
 ):
     item = await _get_item_or_404(item_id, db)
+
+    if item.status == "retired":
+        raise HTTPException(status_code=409, detail="Cannot rollback a retired content item")
 
     target = await db.get(ContentVersion, version_id)
     if target is None or target.content_item_id != item_id:
         raise HTTPException(status_code=404, detail="Version not found for this item")
 
-    # Mark all existing as not current
     await db.execute(
         update(ContentVersion)
         .where(ContentVersion.content_item_id == item_id)
@@ -300,7 +380,7 @@ async def rollback_version(
     )
     next_number = (count_result.scalar_one() or 0) + 1
 
-    rollback_version = ContentVersion(
+    rollback_ver = ContentVersion(
         content_item_id=item_id,
         version_number=next_number,
         payload_json=target.payload_json,
@@ -311,10 +391,15 @@ async def rollback_version(
         is_current=True,
         content_hash=target.content_hash,
     )
-    db.add(rollback_version)
+    db.add(rollback_ver)
     await db.flush()
 
-    item.current_version_id = rollback_version.id
+    item.current_version_id = rollback_ver.id
+    # Rollback always requires re-review; if published signal needs_update
+    if item.status in ("published", "needs_update"):
+        item.status = "needs_update"
+    else:
+        item.status = "pending_review"
     item.updated_at = datetime.now(timezone.utc)
 
     await log_action(
@@ -322,7 +407,7 @@ async def rollback_version(
         action="content.version_rollback",
         actor_user_id=current_user.id,
         resource_type="content_version",
-        resource_id=str(rollback_version.id),
+        resource_id=str(rollback_ver.id),
         details={
             "content_item_id": str(item_id),
             "rollback_to_version_id": str(version_id),
@@ -331,8 +416,8 @@ async def rollback_version(
         ip_address=request.client.host if request.client else None,
     )
     await db.commit()
-    await db.refresh(rollback_version)
-    return rollback_version
+    await db.refresh(rollback_ver)
+    return rollback_ver
 
 
 # ---------------------------------------------------------------------------
@@ -340,15 +425,28 @@ async def rollback_version(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/items/{item_id}/reviews", response_model=ClinicalReviewRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/items/{item_id}/reviews",
+    response_model=ClinicalReviewRead,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_review(
     item_id: uuid.UUID,
     body: ClinicalReviewCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_superuser),
+    current_user: User = Depends(require_content_permission("content.review")),
 ):
     await _get_item_or_404(item_id, db)
+
+    # If a specific version is referenced, it must belong to this item
+    if body.content_version_id is not None:
+        version = await db.get(ContentVersion, body.content_version_id)
+        if version is None or version.content_item_id != item_id:
+            raise HTTPException(
+                status_code=422,
+                detail="content_version_id does not belong to this content item",
+            )
 
     review = ClinicalReview(
         content_item_id=item_id,
@@ -379,7 +477,7 @@ async def create_review(
 async def list_reviews(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_superuser),
+    current_user: User = Depends(require_content_permission("content.review")),
 ):
     await _get_item_or_404(item_id, db)
     result = await db.execute(
@@ -395,31 +493,49 @@ async def list_reviews(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/items/{item_id}/publish", response_model=PublicationRecordRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/items/{item_id}/publish",
+    response_model=PublicationRecordRead,
+    status_code=status.HTTP_201_CREATED,
+)
 async def publish_item(
     item_id: uuid.UUID,
     body: PublishRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_superuser),
+    current_user: User = Depends(require_content_permission("content.publish")),
 ):
     item = await _get_item_or_404(item_id, db)
+
+    if item.status == "retired":
+        raise HTTPException(status_code=409, detail="Cannot publish a retired content item")
 
     if item.current_version_id is None:
         raise HTTPException(status_code=409, detail="Cannot publish: item has no version")
 
-    # Check item has at least one approved review
-    approved_result = await db.execute(
+    # Approved review must be for the current version (or have no version specified)
+    approved_count = await db.scalar(
         select(func.count(ClinicalReview.id)).where(
             ClinicalReview.content_item_id == item_id,
             ClinicalReview.review_decision.in_(["approved", "approved_with_conditions"]),
+            or_(
+                ClinicalReview.content_version_id == item.current_version_id,
+                ClinicalReview.content_version_id.is_(None),
+            ),
         )
     )
-    if approved_result.scalar_one() == 0:
+    if (approved_count or 0) == 0:
         raise HTTPException(
             status_code=409,
-            detail="Cannot publish: item requires at least one approved clinical review",
+            detail=(
+                "Cannot publish: item requires at least one approved clinical review "
+                "for the current version"
+            ),
         )
+
+    # Enforce active region publishing rules
+    current_version = await db.get(ContentVersion, item.current_version_id)
+    await _enforce_region_rules(item, body.region_code, current_version, db)
 
     pub = PublicationRecord(
         content_item_id=item_id,
@@ -448,17 +564,20 @@ async def publish_item(
     return pub
 
 
-@router.post("/items/{item_id}/unpublish", response_model=PublicationRecordRead, status_code=status.HTTP_200_OK)
+@router.post(
+    "/items/{item_id}/unpublish",
+    response_model=PublicationRecordRead,
+    status_code=status.HTTP_200_OK,
+)
 async def unpublish_item(
     item_id: uuid.UUID,
     body: UnpublishRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_superuser),
+    current_user: User = Depends(require_content_permission("content.unpublish")),
 ):
     item = await _get_item_or_404(item_id, db)
 
-    # Find the active publication record for this region
     pub_result = await db.execute(
         select(PublicationRecord).where(
             PublicationRecord.content_item_id == item_id,
@@ -473,7 +592,8 @@ async def unpublish_item(
     pub.publication_status = "unpublished"
     pub.unpublished_by = current_user.id
     pub.unpublished_at = datetime.now(timezone.utc)
-    pub.reason = body.reason or pub.reason
+    if body.reason:
+        pub.reason = body.reason
 
     item.status = "unpublished"
     item.updated_at = datetime.now(timezone.utc)
@@ -522,11 +642,13 @@ async def list_published(
 
     count_result = await db.execute(select(func.count()).select_from(q.subquery()))
     total = count_result.scalar_one()
-
-    import math
     pages = math.ceil(total / per_page) if per_page else 1
     offset = (page - 1) * per_page
-    rows = (await db.execute(q.order_by(ContentItem.updated_at.desc()).offset(offset).limit(per_page))).scalars().all()
+    rows = (
+        await db.execute(
+            q.order_by(ContentItem.updated_at.desc()).offset(offset).limit(per_page)
+        )
+    ).scalars().all()
 
     return ContentItemListResponse(
         items=[ContentItemListItem.model_validate(r) for r in rows],
@@ -538,15 +660,19 @@ async def list_published(
 
 
 # ---------------------------------------------------------------------------
-# Import stubs (Phase 3 bulk import — not yet implemented)
+# Import stubs (Phase 4 bulk import — not yet implemented)
 # ---------------------------------------------------------------------------
 
 
 @router.post("/import/preview", status_code=status.HTTP_501_NOT_IMPLEMENTED)
-async def import_preview(current_user: User = Depends(require_superuser)):
+async def import_preview(
+    current_user: User = Depends(require_content_permission("content.import")),
+):
     raise HTTPException(status_code=501, detail="Bulk import not yet implemented")
 
 
 @router.post("/import/commit", status_code=status.HTTP_501_NOT_IMPLEMENTED)
-async def import_commit(current_user: User = Depends(require_superuser)):
+async def import_commit(
+    current_user: User = Depends(require_content_permission("content.import")),
+):
     raise HTTPException(status_code=501, detail="Bulk import not yet implemented")

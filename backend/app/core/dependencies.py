@@ -173,6 +173,45 @@ async def get_user_org_membership(
     return membership
 
 
+def require_content_permission(permission_name: str):
+    """
+    Platform-scoped permission check: the user must have *permission_name* in
+    ANY of their active org memberships. Platform admins (is_superuser) bypass.
+
+    Use this for governance endpoints that are not scoped to a specific org
+    (content items, versions, evidence sources, platform-wide analytics).
+    For org-scoped endpoints use has_permission() which reads org_id from the path.
+    """
+    async def _check(
+        current_user=Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ):
+        if current_user.is_superuser:
+            return current_user
+
+        from app.models.identity import OrganizationMembership, Permission, RolePermission
+
+        result = await db.execute(
+            select(Permission)
+            .join(RolePermission, RolePermission.permission_id == Permission.id)
+            .join(OrganizationMembership, OrganizationMembership.role_id == RolePermission.role_id)
+            .where(
+                OrganizationMembership.user_id == current_user.id,
+                OrganizationMembership.is_active.is_(True),
+                Permission.name == permission_name,
+            )
+            .limit(1)
+        )
+        if result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission '{permission_name}' required.",
+            )
+        return current_user
+
+    return _check
+
+
 def has_permission(permission_name: str):
     """
     Return a dependency that checks whether the current user's role (within

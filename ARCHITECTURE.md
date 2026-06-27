@@ -148,6 +148,10 @@ Six system roles (seeded by migration 002):
 
 Admin operations within an org require `institution_admin` or `platform_admin` membership (`ADMIN_ROLES` set in organizations.py).
 
+**Content governance uses two FastAPI dependency factories:**
+- `require_content_permission(perm)` — platform-scoped: accepts the user if they hold `perm` in *any* active org membership. Used for governance write gates where content has no single owning org.
+- `has_permission(perm)` — org-scoped: checks `perm` in the specific org given by the `org_id` path parameter. Used for org-level analytics to prevent cross-org data leakage.
+
 ## Migrations
 
 | ID | Name | Tables |
@@ -156,6 +160,7 @@ Admin operations within an org require `institution_admin` or `platform_admin` m
 | 002 | identity_rbac | users, organizations, roles, permissions, role_permissions, organization_memberships, refresh_tokens, audit_logs |
 | 003 | interaction_user_id | adds `user_id` FK column to interactions |
 | 004 | content_governance | content_items, content_versions, evidence_sources, approval_batches, clinical_reviews, region_publishing_rules, publication_records, learner_failure_analytics |
+| 005 | governance_permissions | seeds 10 governance permissions and assigns them to educator / content_reviewer / institution_admin / platform_admin roles |
 
 **Important**: Migrations use `postgresql.UUID` and `postgresql.JSON` — they target PostgreSQL only. Application models use `sqlalchemy.Uuid(as_uuid=True, native_uuid=True)` (cross-DB) so tests can run on SQLite in-memory databases via `Base.metadata.create_all`.
 
@@ -210,5 +215,5 @@ Refresh token pruning runs inside the same DB transaction as `login` and `refres
 
 1. **Email verification**: Column and `is_verified` flag exist; no verification flow is implemented.
 2. **Expired refresh token background sweep**: Pruning runs per-user on login/refresh; no scheduled job removes tokens for inactive users.
-3. **`RoleRead.permissions`**: Always returns `[]` in tests because no permissions are seeded. The query is correct (eager-loads via `role_permissions → permission`); permissions will appear once they are inserted.
+3. **`RoleRead.permissions`**: Returns `[]` in tests that do not seed governance permissions. Migration 005 seeds 10 governance permissions in PostgreSQL; the test `conftest.py` mirrors this seeding for SQLite in-memory test databases.
 4. **Progress tracking requires authenticated submissions**: Anonymous scenario attempts (no Bearer token) are not attributed to users and do not appear in progress analytics.

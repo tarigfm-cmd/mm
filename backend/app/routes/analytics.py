@@ -3,10 +3,11 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import cast, func, select
+from sqlalchemy import Integer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user, require_superuser
+from app.core.dependencies import get_current_user, has_permission, require_content_permission
 from app.database import get_db
 from app.models.governance import ContentItem, LearnerFailureAnalytics
 from app.models.identity import User
@@ -19,15 +20,6 @@ from app.schemas.governance import (
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
-_FAILURE_COLUMNS = {
-    "failed_red_flag": LearnerFailureAnalytics.failed_red_flag,
-    "failed_counseling_point": LearnerFailureAnalytics.failed_counseling_point,
-    "failed_interaction_detection": LearnerFailureAnalytics.failed_interaction_detection,
-    "failed_referral_decision": LearnerFailureAnalytics.failed_referral_decision,
-    "failed_dose_calculation": LearnerFailureAnalytics.failed_dose_calculation,
-    "failed_documentation": LearnerFailureAnalytics.failed_documentation,
-}
-
 
 @router.post("/failures", status_code=status.HTTP_201_CREATED)
 async def record_failure(
@@ -37,7 +29,6 @@ async def record_failure(
     current_user: User = Depends(get_current_user),
 ):
     """Record a learner attempt outcome against a content item."""
-    # Verify content item exists
     item = await db.get(ContentItem, body.content_item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Content item not found")
@@ -57,7 +48,7 @@ async def get_failure_hotspots(
     content_type: Optional[str] = Query(None),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_superuser),
+    current_user: User = Depends(require_content_permission("analytics.view")),
 ):
     q = (
         select(
@@ -66,12 +57,12 @@ async def get_failure_hotspots(
             ContentItem.content_type,
             func.count(LearnerFailureAnalytics.id).label("total_attempts"),
             func.avg(LearnerFailureAnalytics.score).label("avg_score"),
-            func.avg(func.cast(LearnerFailureAnalytics.failed_red_flag, type_=func.count().type)).label("red_flag_fail_rate"),
-            func.avg(func.cast(LearnerFailureAnalytics.failed_counseling_point, type_=func.count().type)).label("counseling_fail_rate"),
-            func.avg(func.cast(LearnerFailureAnalytics.failed_interaction_detection, type_=func.count().type)).label("interaction_fail_rate"),
-            func.avg(func.cast(LearnerFailureAnalytics.failed_referral_decision, type_=func.count().type)).label("referral_fail_rate"),
-            func.avg(func.cast(LearnerFailureAnalytics.failed_dose_calculation, type_=func.count().type)).label("dose_calc_fail_rate"),
-            func.avg(func.cast(LearnerFailureAnalytics.failed_documentation, type_=func.count().type)).label("documentation_fail_rate"),
+            func.avg(cast(LearnerFailureAnalytics.failed_red_flag, Integer)).label("red_flag_fail_rate"),
+            func.avg(cast(LearnerFailureAnalytics.failed_counseling_point, Integer)).label("counseling_fail_rate"),
+            func.avg(cast(LearnerFailureAnalytics.failed_interaction_detection, Integer)).label("interaction_fail_rate"),
+            func.avg(cast(LearnerFailureAnalytics.failed_referral_decision, Integer)).label("referral_fail_rate"),
+            func.avg(cast(LearnerFailureAnalytics.failed_dose_calculation, Integer)).label("dose_calc_fail_rate"),
+            func.avg(cast(LearnerFailureAnalytics.failed_documentation, Integer)).label("documentation_fail_rate"),
         )
         .join(LearnerFailureAnalytics, LearnerFailureAnalytics.content_item_id == ContentItem.id)
         .group_by(ContentItem.id, ContentItem.title, ContentItem.content_type)
@@ -92,7 +83,7 @@ async def get_failure_hotspots(
             title=r.title,
             content_type=r.content_type,
             total_attempts=r.total_attempts,
-            avg_score=r.avg_score,
+            avg_score=float(r.avg_score) if r.avg_score is not None else None,
             red_flag_fail_rate=float(r.red_flag_fail_rate or 0),
             counseling_fail_rate=float(r.counseling_fail_rate or 0),
             interaction_fail_rate=float(r.interaction_fail_rate or 0),
@@ -108,28 +99,27 @@ async def get_failure_hotspots(
 async def get_content_failure_summary(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_superuser),
+    current_user: User = Depends(require_content_permission("analytics.view")),
 ):
     item = await db.get(ContentItem, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Content item not found")
 
-    # Aggregate totals
     agg = (await db.execute(
         select(
             func.count(LearnerFailureAnalytics.id).label("total"),
             func.avg(LearnerFailureAnalytics.score).label("avg_score"),
-            func.sum(func.cast(LearnerFailureAnalytics.failed_red_flag, type_=func.count().type)).label("red_flag"),
-            func.sum(func.cast(LearnerFailureAnalytics.failed_counseling_point, type_=func.count().type)).label("counseling"),
-            func.sum(func.cast(LearnerFailureAnalytics.failed_interaction_detection, type_=func.count().type)).label("interaction"),
-            func.sum(func.cast(LearnerFailureAnalytics.failed_referral_decision, type_=func.count().type)).label("referral"),
-            func.sum(func.cast(LearnerFailureAnalytics.failed_dose_calculation, type_=func.count().type)).label("dose_calc"),
-            func.sum(func.cast(LearnerFailureAnalytics.failed_documentation, type_=func.count().type)).label("documentation"),
+            func.sum(cast(LearnerFailureAnalytics.failed_red_flag, Integer)).label("red_flag"),
+            func.sum(cast(LearnerFailureAnalytics.failed_counseling_point, Integer)).label("counseling"),
+            func.sum(cast(LearnerFailureAnalytics.failed_interaction_detection, Integer)).label("interaction"),
+            func.sum(cast(LearnerFailureAnalytics.failed_referral_decision, Integer)).label("referral"),
+            func.sum(cast(LearnerFailureAnalytics.failed_dose_calculation, Integer)).label("dose_calc"),
+            func.sum(cast(LearnerFailureAnalytics.failed_documentation, Integer)).label("documentation"),
         ).where(LearnerFailureAnalytics.content_item_id == item_id)
     )).one()
 
     total = agg.total or 0
-    failure_breakdown = {}
+    failure_breakdown: dict[str, float] = {}
     if total:
         failure_breakdown = {
             "red_flag": float(agg.red_flag or 0) / total,
@@ -140,7 +130,6 @@ async def get_content_failure_summary(
             "documentation": float(agg.documentation or 0) / total,
         }
 
-    # Per-version breakdown
     version_rows = (await db.execute(
         select(
             LearnerFailureAnalytics.content_version_id,
@@ -174,17 +163,24 @@ async def get_content_failure_summary(
 async def get_org_weakness_map(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_superuser),
+    current_user: User = Depends(has_permission("analytics.view_org")),
 ):
+    """
+    Return weakness analytics for a specific organization.
+
+    Access: platform admins (is_superuser) or users with analytics.view_org
+    permission within the specified organization. Organization data is never
+    exposed across org boundaries.
+    """
     agg = (await db.execute(
         select(
             func.count(LearnerFailureAnalytics.id).label("total"),
-            func.sum(func.cast(LearnerFailureAnalytics.failed_red_flag, type_=func.count().type)).label("red_flag"),
-            func.sum(func.cast(LearnerFailureAnalytics.failed_counseling_point, type_=func.count().type)).label("counseling"),
-            func.sum(func.cast(LearnerFailureAnalytics.failed_interaction_detection, type_=func.count().type)).label("interaction"),
-            func.sum(func.cast(LearnerFailureAnalytics.failed_referral_decision, type_=func.count().type)).label("referral"),
-            func.sum(func.cast(LearnerFailureAnalytics.failed_dose_calculation, type_=func.count().type)).label("dose_calc"),
-            func.sum(func.cast(LearnerFailureAnalytics.failed_documentation, type_=func.count().type)).label("documentation"),
+            func.sum(cast(LearnerFailureAnalytics.failed_red_flag, Integer)).label("red_flag"),
+            func.sum(cast(LearnerFailureAnalytics.failed_counseling_point, Integer)).label("counseling"),
+            func.sum(cast(LearnerFailureAnalytics.failed_interaction_detection, Integer)).label("interaction"),
+            func.sum(cast(LearnerFailureAnalytics.failed_referral_decision, Integer)).label("referral"),
+            func.sum(cast(LearnerFailureAnalytics.failed_dose_calculation, Integer)).label("dose_calc"),
+            func.sum(cast(LearnerFailureAnalytics.failed_documentation, Integer)).label("documentation"),
         ).where(LearnerFailureAnalytics.organization_id == org_id)
     )).one()
 
@@ -202,7 +198,6 @@ async def get_org_weakness_map(
 
     top_failure_types = sorted(failure_rates, key=lambda k: failure_rates[k], reverse=True)[:3]
 
-    # Identify weak domains (domains where avg score is below 0.6)
     domain_rows = (await db.execute(
         select(
             ContentItem.domain,

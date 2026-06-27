@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user, require_superuser
+from app.core.dependencies import get_current_user, require_content_permission
 from app.database import get_db
 from app.models.governance import EvidenceSource
 from app.models.identity import User
@@ -26,7 +26,7 @@ async def create_evidence_source(
     body: EvidenceSourceCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_superuser),
+    current_user: User = Depends(require_content_permission("evidence.manage")),
 ):
     source = EvidenceSource(**body.model_dump())
     db.add(source)
@@ -67,7 +67,7 @@ async def update_evidence_source(
     body: EvidenceSourceUpdate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_superuser),
+    current_user: User = Depends(require_content_permission("evidence.manage")),
 ):
     source = await db.get(EvidenceSource, source_id)
     if source is None:
@@ -95,7 +95,7 @@ async def update_evidence_source(
 @router.get("/due-for-review", response_model=list[EvidenceSourceRead])
 async def list_due_for_review(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_superuser),
+    current_user: User = Depends(require_content_permission("evidence.manage")),
 ):
     now = datetime.now(timezone.utc)
     result = await db.execute(

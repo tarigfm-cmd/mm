@@ -184,6 +184,12 @@ def upgrade() -> None:
     op.create_index("ix_publication_records_content_item_id", "publication_records", ["content_item_id"])
     op.create_index("ix_publication_records_content_version_id", "publication_records", ["content_version_id"])
     op.create_index("ix_publication_records_region_code", "publication_records", ["region_code"])
+    # Composite index for the publish/unpublish lookup query
+    op.create_index(
+        "ix_publication_records_item_region_status",
+        "publication_records",
+        ["content_item_id", "region_code", "publication_status"],
+    )
 
     # ── learner_failure_analytics ──────────────────────────────────────────────
     op.create_table(
@@ -215,6 +221,12 @@ def upgrade() -> None:
     op.create_index("ix_learner_failure_analytics_organization_id", "learner_failure_analytics", ["organization_id"])
     op.create_index("ix_learner_failure_analytics_region_code", "learner_failure_analytics", ["region_code"])
     op.create_index("ix_learner_failure_analytics_created_at", "learner_failure_analytics", ["created_at"])
+    # Composite for time-series analytics by content item
+    op.create_index(
+        "ix_learner_failure_analytics_item_created",
+        "learner_failure_analytics",
+        ["content_item_id", "created_at"],
+    )
 
 
 def downgrade() -> None:
