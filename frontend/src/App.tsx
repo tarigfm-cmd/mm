@@ -11,6 +11,7 @@ const ScenariosPage = lazy(() => import('@/pages/ScenariosPage'))
 const ScenarioPage = lazy(() => import('@/pages/ScenarioPage'))
 const OrganizationsPage = lazy(() => import('@/pages/OrganizationsPage'))
 const OrgDetailPage = lazy(() => import('@/pages/OrgDetailPage'))
+const ProgressPage = lazy(() => import('@/pages/ProgressPage'))
 const LoginPage = lazy(() => import('@/pages/LoginPage'))
 const RegisterPage = lazy(() => import('@/pages/RegisterPage'))
 
@@ -37,6 +38,7 @@ function AppRoutes() {
         <Route path="/scenarios/:id" element={<ScenarioPage />} />
         <Route path="/orgs" element={<OrganizationsPage />} />
         <Route path="/orgs/:slug" element={<OrgDetailPage />} />
+        <Route path="/progress" element={<ProgressPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

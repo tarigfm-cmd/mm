@@ -17,6 +17,7 @@ from app.routes import auth as auth_router
 from app.routes import health as health_router
 from app.routes import materials as materials_router
 from app.routes import organizations as orgs_router
+from app.routes import progress as progress_router
 from app.routes import scenarios as scenarios_router
 
 settings = get_settings()
@@ -77,6 +78,7 @@ app.include_router(materials_router.router)
 app.include_router(scenarios_router.router)
 app.include_router(orgs_router.router)
 app.include_router(orgs_router.roles_router)
+app.include_router(progress_router.router)
 
 
 @app.exception_handler(Exception)

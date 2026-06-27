@@ -12,6 +12,7 @@ import type {
   Member,
   Organization,
   OrgWithRole,
+  ProgressSummary,
   RegisterRequest,
   Scenario,
   ScenarioInteractionsResponse,
@@ -314,6 +315,15 @@ export const orgsApi = {
 export const rolesApi = {
   list: async (): Promise<SystemRole[]> => {
     const { data } = await http.get<SystemRole[]>('/api/roles')
+    return data
+  },
+}
+
+// ── Progress API ──────────────────────────────────────────────────────────────
+
+export const progressApi = {
+  get: async (days = 30): Promise<ProgressSummary> => {
+    const { data } = await http.get<ProgressSummary>('/api/progress', { params: { days } })
     return data
   },
 }

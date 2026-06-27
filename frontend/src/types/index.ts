@@ -170,6 +170,29 @@ export interface AddMemberRequest {
   role_name: string
 }
 
+// ── Progress ───────────────────────────────────────────────────────────────────
+
+export interface ScorePoint {
+  date: string
+  avg_score: number
+  count: number
+}
+
+export interface BreakdownItem {
+  label: string
+  avg_score: number
+  count: number
+}
+
+export interface ProgressSummary {
+  total_attempts: number
+  avg_score: number | null
+  best_score: number | null
+  score_trend: ScorePoint[]
+  by_difficulty: BreakdownItem[]
+  by_specialty: BreakdownItem[]
+}
+
 // ── UI state ───────────────────────────────────────────────────────────────────
 
 export interface ApiError {

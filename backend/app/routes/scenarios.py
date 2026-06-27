@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.dependencies import get_optional_user
 from app.database import get_db
 from app.models import Interaction, Material, Scenario
 from app.schemas import (
@@ -160,6 +161,7 @@ async def submit_answer(
     scenario_id: uuid.UUID,
     body: InteractionCreate,
     db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_optional_user),
 ) -> InteractionResponse:
     scenario = await db.get(Scenario, scenario_id)
     if scenario is None:
@@ -186,6 +188,7 @@ async def submit_answer(
     interaction = Interaction(
         scenario_id=scenario.id,
         session_id=body.session_id,
+        user_id=current_user.id if current_user else None,
         user_answer=body.content,
         ai_feedback=evaluation["feedback"],
         score=evaluation["score"],

@@ -5,6 +5,7 @@ import {
   BeakerIcon,
   AcademicCapIcon,
   BuildingLibraryIcon,
+  ChartBarIcon,
   ArrowRightStartOnRectangleIcon,
 } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
@@ -14,6 +15,7 @@ import { useAppStore } from '@/store/appStore'
 const navItems = [
   { to: '/', label: 'Dashboard', icon: HomeIcon, end: true },
   { to: '/scenarios', label: 'Scenarios', icon: BeakerIcon, end: false },
+  { to: '/progress', label: 'My Progress', icon: ChartBarIcon, end: false },
   { to: '/upload', label: 'Upload', icon: ArrowUpTrayIcon, end: false },
   { to: '/orgs', label: 'Organizations', icon: BuildingLibraryIcon, end: false },
 ]

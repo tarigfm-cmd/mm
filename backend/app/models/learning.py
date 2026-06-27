@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import DateTime, Float, ForeignKey, JSON, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -59,6 +60,12 @@ class Interaction(Base):
     session_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True, index=True
     )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True, native_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     user_answer: Mapped[str] = mapped_column(Text, nullable=False)
     ai_feedback: Mapped[str] = mapped_column(Text, nullable=False)
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -71,3 +78,4 @@ class Interaction(Base):
     )
 
     scenario: Mapped["Scenario"] = relationship("Scenario", back_populates="interactions")
+    user: Mapped[Optional["User"]] = relationship("User", foreign_keys=[user_id])  # noqa: F821

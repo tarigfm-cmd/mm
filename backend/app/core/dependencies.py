@@ -14,6 +14,7 @@ from app.core.security import decode_token
 from app.database import get_db
 
 _bearer = HTTPBearer(auto_error=True)
+_bearer_optional = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
@@ -51,6 +52,30 @@ async def get_current_user(
     user = await db.get(User, user_id)
     if user is None or not user.is_active:
         raise credentials_exception
+    return user
+
+
+async def get_optional_user(
+    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(_bearer_optional)] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Like get_current_user but returns None instead of raising 401 when unauthenticated."""
+    if credentials is None:
+        return None
+    from app.models.identity import User
+
+    try:
+        claims = decode_token(credentials.credentials)
+        subject: str = claims.get("sub", "")
+        if not subject or claims.get("type") != "access":
+            return None
+        user_id = uuid.UUID(subject)
+    except (ValueError, Exception):
+        return None
+
+    user = await db.get(User, user_id)
+    if user is None or not user.is_active:
+        return None
     return user
 
 
