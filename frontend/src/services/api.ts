@@ -2,16 +2,22 @@ import axios, { AxiosError, type AxiosInstance, type InternalAxiosRequestConfig 
 import toast from 'react-hot-toast'
 import { useAppStore } from '@/store/appStore'
 import type {
+  AddMemberRequest,
+  CreateOrgRequest,
   GenerateScenarioRequest,
   Interaction,
   LoginRequest,
   MaterialDetail,
   MaterialListResponse,
+  Member,
+  Organization,
+  OrgWithRole,
   RegisterRequest,
   Scenario,
   ScenarioInteractionsResponse,
   ScenarioListResponse,
   SubmitAnswerRequest,
+  SystemRole,
   TokenResponse,
   UserRead,
 } from '@/types'
@@ -256,6 +262,58 @@ export const scenariosApi = {
     const { data } = await http.get<ScenarioInteractionsResponse>(
       `/api/scenarios/${scenarioId}/interactions`,
     )
+    return data
+  },
+}
+
+// ── Organizations API ─────────────────────────────────────────────────────────
+
+export const orgsApi = {
+  list: async (): Promise<OrgWithRole[]> => {
+    const { data } = await http.get<OrgWithRole[]>('/api/orgs')
+    return data
+  },
+
+  create: async (body: CreateOrgRequest): Promise<Organization> => {
+    const { data } = await http.post<Organization>('/api/orgs', body)
+    return data
+  },
+
+  get: async (slug: string): Promise<Organization> => {
+    const { data } = await http.get<Organization>(`/api/orgs/${slug}`)
+    return data
+  },
+
+  update: async (slug: string, body: CreateOrgRequest): Promise<Organization> => {
+    const { data } = await http.patch<Organization>(`/api/orgs/${slug}`, body)
+    return data
+  },
+
+  listMembers: async (slug: string): Promise<Member[]> => {
+    const { data } = await http.get<Member[]>(`/api/orgs/${slug}/members`)
+    return data
+  },
+
+  addMember: async (slug: string, body: AddMemberRequest): Promise<Member> => {
+    const { data } = await http.post<Member>(`/api/orgs/${slug}/members`, body)
+    return data
+  },
+
+  updateMemberRole: async (slug: string, userId: string, roleName: string): Promise<Member> => {
+    const { data } = await http.patch<Member>(`/api/orgs/${slug}/members/${userId}`, {
+      role_name: roleName,
+    })
+    return data
+  },
+
+  removeMember: async (slug: string, userId: string): Promise<void> => {
+    await http.delete(`/api/orgs/${slug}/members/${userId}`)
+  },
+}
+
+export const rolesApi = {
+  list: async (): Promise<SystemRole[]> => {
+    const { data } = await http.get<SystemRole[]>('/api/roles')
     return data
   },
 }

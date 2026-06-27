@@ -116,6 +116,60 @@ export interface RegisterRequest {
   full_name?: string
 }
 
+// ── Organizations ──────────────────────────────────────────────────────────────
+
+export type OrgType =
+  | 'university'
+  | 'pharmacy_chain'
+  | 'hospital'
+  | 'training_center'
+  | 'enterprise'
+  | 'individual_workspace'
+
+export interface Organization {
+  id: string
+  name: string
+  slug: string
+  org_type: OrgType
+  is_active: boolean
+  created_at: string
+}
+
+export interface OrgWithRole extends Organization {
+  member_role: string
+  member_count: number
+}
+
+export interface Member {
+  user_id: string
+  username: string
+  email: string
+  full_name: string | null
+  role_name: string
+  role_display_name: string
+  is_active: boolean
+  joined_at: string
+}
+
+export interface SystemRole {
+  id: string
+  name: string
+  display_name: string
+  description: string | null
+  is_system_role: boolean
+}
+
+export interface CreateOrgRequest {
+  name: string
+  slug: string
+  org_type: OrgType
+}
+
+export interface AddMemberRequest {
+  email: string
+  role_name: string
+}
+
 // ── UI state ───────────────────────────────────────────────────────────────────
 
 export interface ApiError {

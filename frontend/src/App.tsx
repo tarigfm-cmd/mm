@@ -9,6 +9,8 @@ const Dashboard = lazy(() => import('@/pages/Dashboard'))
 const MaterialsUpload = lazy(() => import('@/pages/MaterialsUpload'))
 const ScenariosPage = lazy(() => import('@/pages/ScenariosPage'))
 const ScenarioPage = lazy(() => import('@/pages/ScenarioPage'))
+const OrganizationsPage = lazy(() => import('@/pages/OrganizationsPage'))
+const OrgDetailPage = lazy(() => import('@/pages/OrgDetailPage'))
 const LoginPage = lazy(() => import('@/pages/LoginPage'))
 const RegisterPage = lazy(() => import('@/pages/RegisterPage'))
 
@@ -33,6 +35,8 @@ function AppRoutes() {
         <Route path="/upload" element={<MaterialsUpload />} />
         <Route path="/scenarios" element={<ScenariosPage />} />
         <Route path="/scenarios/:id" element={<ScenarioPage />} />
+        <Route path="/orgs" element={<OrganizationsPage />} />
+        <Route path="/orgs/:slug" element={<OrgDetailPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
