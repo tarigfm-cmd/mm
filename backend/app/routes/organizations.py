@@ -14,6 +14,7 @@ from app.models.identity import (
     Organization,
     OrganizationMembership,
     Role,
+    RolePermission,
     User,
 )
 from app.schemas.identity import (
@@ -21,10 +22,13 @@ from app.schemas.identity import (
     MemberRead,
     OrganizationCreate,
     OrganizationRead,
+    OrganizationUpdate,
     OrgWithRole,
+    PermissionRead,
     RoleRead,
     UpdateMemberRoleRequest,
 )
+from app.services.audit import log_action
 
 router = APIRouter(prefix="/api/orgs", tags=["organizations"])
 
@@ -118,9 +122,29 @@ async def list_roles(
     db: AsyncSession = Depends(get_db),
 ) -> List[RoleRead]:
     result = await db.execute(
-        select(Role).where(Role.is_system_role.is_(True)).order_by(Role.name)
+        select(Role)
+        .where(Role.is_system_role.is_(True))
+        .options(
+            selectinload(Role.role_permissions).selectinload(RolePermission.permission)
+        )
+        .order_by(Role.name)
     )
-    return [RoleRead.model_validate(r) for r in result.scalars().all()]
+    roles = result.scalars().all()
+    return [
+        RoleRead(
+            id=r.id,
+            name=r.name,
+            display_name=r.display_name,
+            description=r.description,
+            is_system_role=r.is_system_role,
+            permissions=[
+                PermissionRead.model_validate(rp.permission)
+                for rp in r.role_permissions
+                if rp.permission is not None
+            ],
+        )
+        for r in roles
+    ]
 
 
 # ── Organization CRUD ─────────────────────────────────────────────────────────
@@ -148,7 +172,6 @@ async def create_org(
     db.add(org)
     await db.flush()  # get org.id
 
-    # Creator becomes institution_admin
     admin_role = await _get_role_by_name("institution_admin", db)
     membership = OrganizationMembership(
         user_id=current_user.id,
@@ -156,6 +179,16 @@ async def create_org(
         role_id=admin_role.id,
     )
     db.add(membership)
+
+    await log_action(
+        db,
+        action="org.create",
+        actor_user_id=current_user.id,
+        organization_id=org.id,
+        resource_type="organization",
+        resource_id=str(org.id),
+        details={"name": org.name, "slug": org.slug, "org_type": org.org_type},
+    )
     await db.commit()
     await db.refresh(org)
     return OrganizationRead.model_validate(org)
@@ -223,14 +256,14 @@ async def get_org(
 )
 async def update_org(
     slug: str,
-    body: OrganizationCreate,
+    body: OrganizationUpdate,
     current_user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
 ) -> OrganizationRead:
     org = await _get_active_org(slug, db)
     await _require_admin(current_user, org, db)
 
-    if body.slug != org.slug:
+    if body.slug is not None and body.slug != org.slug:
         existing = await db.execute(select(Organization).where(Organization.slug == body.slug))
         if existing.scalar_one_or_none():
             raise HTTPException(
@@ -239,8 +272,23 @@ async def update_org(
             )
         org.slug = body.slug
 
-    org.name = body.name
-    org.org_type = body.org_type
+    if body.name is not None:
+        org.name = body.name
+    if body.org_type is not None:
+        org.org_type = body.org_type
+
+    await log_action(
+        db,
+        action="org.update",
+        actor_user_id=current_user.id,
+        organization_id=org.id,
+        resource_type="organization",
+        resource_id=str(org.id),
+        details={
+            k: v for k, v in {"name": body.name, "slug": body.slug, "org_type": body.org_type}.items()
+            if v is not None
+        },
+    )
     await db.commit()
     await db.refresh(org)
     return OrganizationRead.model_validate(org)
@@ -306,7 +354,6 @@ async def add_member(
     org = await _get_active_org(slug, db)
     await _require_admin(current_user, org, db)
 
-    # Resolve target user
     result = await db.execute(select(User).where(User.email == body.email))
     target = result.scalar_one_or_none()
     if not target:
@@ -315,7 +362,6 @@ async def add_member(
             detail="No user found with that email address.",
         )
 
-    # Check for existing membership
     existing = await db.execute(
         select(OrganizationMembership).where(
             OrganizationMembership.user_id == target.id,
@@ -331,11 +377,9 @@ async def add_member(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="User is already a member of this organization.",
             )
-        # Re-activate lapsed membership with new role
         existing_m.role_id = role.id
         existing_m.is_active = True
-        await db.commit()
-        await db.refresh(existing_m)
+        await db.flush()
         membership = existing_m
     else:
         membership = OrganizationMembership(
@@ -344,8 +388,19 @@ async def add_member(
             role_id=role.id,
         )
         db.add(membership)
-        await db.commit()
-        await db.refresh(membership)
+        await db.flush()
+
+    await log_action(
+        db,
+        action="org.member_added",
+        actor_user_id=current_user.id,
+        organization_id=org.id,
+        resource_type="user",
+        resource_id=str(target.id),
+        details={"email": target.email, "role": role.name},
+    )
+    await db.commit()
+    await db.refresh(membership)
 
     return MemberRead(
         user_id=target.id,
@@ -397,8 +452,19 @@ async def update_member_role(
     if not membership:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
 
+    old_role_name = membership.role.name
     role = await _get_role_by_name(body.role_name, db)
     membership.role_id = role.id
+
+    await log_action(
+        db,
+        action="org.member_role_updated",
+        actor_user_id=current_user.id,
+        organization_id=org.id,
+        resource_type="user",
+        resource_id=str(target_id),
+        details={"old_role": old_role_name, "new_role": role.name},
+    )
     await db.commit()
     await db.refresh(membership)
 
@@ -434,7 +500,6 @@ async def remove_member(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid user ID.")
 
-    # Users can remove themselves; admins can remove anyone
     if target_id != current_user.id:
         await _require_admin(current_user, org, db)
 
@@ -450,4 +515,13 @@ async def remove_member(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
 
     membership.is_active = False
+
+    await log_action(
+        db,
+        action="org.member_removed",
+        actor_user_id=current_user.id,
+        organization_id=org.id,
+        resource_type="user",
+        resource_id=str(target_id),
+    )
     await db.commit()

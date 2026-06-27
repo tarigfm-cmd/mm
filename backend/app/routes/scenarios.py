@@ -148,7 +148,24 @@ async def get_scenario(
     scenario = await db.get(Scenario, scenario_id)
     if scenario is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario not found.")
-    return ScenarioResponse.model_validate(scenario)
+
+    count_result = await db.execute(
+        select(func.count(Interaction.id)).where(Interaction.scenario_id == scenario_id)
+    )
+    interaction_count = count_result.scalar_one()
+
+    return ScenarioResponse(
+        id=scenario.id,
+        material_id=scenario.material_id,
+        title=scenario.title,
+        clinical_case=scenario.clinical_case,
+        difficulty_level=scenario.difficulty_level,
+        specialty=scenario.specialty,
+        key_concepts=scenario.key_concepts,
+        interaction_count=interaction_count,
+        created_at=scenario.created_at,
+        updated_at=scenario.updated_at,
+    )
 
 
 @router.post(

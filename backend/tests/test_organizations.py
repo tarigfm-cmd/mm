@@ -266,3 +266,95 @@ async def test_add_member_unknown_email_returns_404(client: AsyncClient):
 async def test_create_org_requires_auth(client: AsyncClient):
     resp = await client.post("/api/orgs", json=ORG_PAYLOAD)
     assert resp.status_code == 403
+
+
+# ── Organization PATCH (partial update) ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_update_org_name_only(client: AsyncClient):
+    """PATCH with only name leaves slug and org_type unchanged."""
+    token = await register_and_login(client, ADMIN_USER)
+    await client.post("/api/orgs", json=ORG_PAYLOAD, headers=auth(token))
+
+    resp = await client.patch(
+        "/api/orgs/city-university",
+        json={"name": "Updated University"},
+        headers=auth(token),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["name"] == "Updated University"
+    assert data["slug"] == "city-university"
+    assert data["org_type"] == "university"
+
+
+@pytest.mark.asyncio
+async def test_update_org_slug_only(client: AsyncClient):
+    """PATCH with only slug updates the slug without touching other fields."""
+    token = await register_and_login(client, ADMIN_USER)
+    await client.post("/api/orgs", json=ORG_PAYLOAD, headers=auth(token))
+
+    resp = await client.patch(
+        "/api/orgs/city-university",
+        json={"slug": "new-university-slug"},
+        headers=auth(token),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["slug"] == "new-university-slug"
+    assert data["name"] == ORG_PAYLOAD["name"]
+
+
+@pytest.mark.asyncio
+async def test_update_org_requires_admin(client: AsyncClient):
+    """Non-admin members cannot PATCH org details."""
+    admin_token = await register_and_login(client, ADMIN_USER)
+    await client.post("/api/orgs", json=ORG_PAYLOAD, headers=auth(admin_token))
+
+    member_token = await register_and_login(client, SECOND_USER)
+    await client.post(
+        "/api/orgs/city-university/members",
+        json={"email": SECOND_USER["email"], "role_name": "student"},
+        headers=auth(admin_token),
+    )
+
+    resp = await client.patch(
+        "/api/orgs/city-university",
+        json={"name": "Hacked Name"},
+        headers=auth(member_token),
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_update_org_duplicate_slug_returns_409(client: AsyncClient):
+    """Changing slug to one already taken returns 409."""
+    token = await register_and_login(client, ADMIN_USER)
+    await client.post("/api/orgs", json=ORG_PAYLOAD, headers=auth(token))
+    await client.post(
+        "/api/orgs",
+        json={"name": "Other Org", "slug": "other-org", "org_type": "hospital"},
+        headers=auth(token),
+    )
+
+    resp = await client.patch(
+        "/api/orgs/city-university",
+        json={"slug": "other-org"},
+        headers=auth(token),
+    )
+    assert resp.status_code == 409
+
+
+# ── Roles endpoint ────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_roles_includes_permissions_field(client: AsyncClient):
+    """Each role in the response has a permissions field (list, possibly empty)."""
+    token = await register_and_login(client, ADMIN_USER)
+    resp = await client.get("/api/roles", headers=auth(token))
+    assert resp.status_code == 200
+    for role in resp.json():
+        assert "permissions" in role
+        assert isinstance(role["permissions"], list)

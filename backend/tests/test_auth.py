@@ -1,6 +1,8 @@
 """Integration tests for authentication endpoints."""
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 VALID_USER = {
     "email": "authtest@example.com",
@@ -208,6 +210,47 @@ async def test_update_username_conflict_returns_409(client: AsyncClient):
 
 
 # ── Logout ────────────────────────────────────────────────────────────────────
+
+# ── Expired token pruning ─────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_login_prunes_revoked_refresh_tokens(client: AsyncClient, fresh_engine):
+    """Login removes revoked refresh tokens left over from previous sessions."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.core.security import hash_token
+    from app.models.identity import RefreshToken, User
+
+    await _register(client)
+
+    # Inject a pre-revoked token directly into the DB to simulate a previous session
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        user_row = (await s.execute(select(User).where(User.email == VALID_USER["email"]))).scalar_one()
+        s.add(RefreshToken(
+            user_id=user_row.id,
+            token_hash=hash_token("stale-revoked-token-value"),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+            is_revoked=True,
+        ))
+        await s.commit()
+
+    # Confirm the revoked token is in the DB before login
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        revoked_before = (await s.execute(
+            select(func.count(RefreshToken.id)).where(RefreshToken.is_revoked.is_(True))
+        )).scalar_one()
+    assert revoked_before == 1
+
+    # Login — pruning runs as part of the login handler
+    await _login(client)
+
+    # Revoked token must be gone
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        revoked_after = (await s.execute(
+            select(func.count(RefreshToken.id)).where(RefreshToken.is_revoked.is_(True))
+        )).scalar_one()
+    assert revoked_after == 0
+
 
 @pytest.mark.asyncio
 async def test_logout_revokes_refresh_token(client: AsyncClient):

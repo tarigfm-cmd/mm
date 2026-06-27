@@ -91,6 +91,21 @@ class OrganizationCreate(BaseModel):
         return v
 
 
+class OrganizationUpdate(BaseModel):
+    """Partial update schema — all fields are optional."""
+
+    name: Optional[str] = Field(default=None, min_length=2, max_length=255)
+    slug: Optional[str] = Field(default=None, min_length=2, max_length=100, pattern=r"^[a-z0-9-]+$")
+    org_type: Optional[str] = None
+
+    @field_validator("org_type", mode="before")
+    @classmethod
+    def valid_org_type(cls, v: str | None) -> str | None:
+        if v is not None and v not in ORG_TYPES:
+            raise ValueError(f"org_type must be one of: {', '.join(sorted(ORG_TYPES))}")
+        return v
+
+
 class OrganizationRead(BaseModel):
     id: uuid.UUID
     name: str

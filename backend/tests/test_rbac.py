@@ -147,3 +147,76 @@ def test_all_expected_types_present():
         "individual_workspace",
     }
     assert ORG_TYPES == expected
+
+
+# ---------------------------------------------------------------------------
+# OrganizationUpdate schema validation
+# ---------------------------------------------------------------------------
+
+from app.schemas.identity import OrganizationUpdate  # noqa: E402
+
+
+def test_org_update_all_fields_optional():
+    """OrganizationUpdate accepts an empty body."""
+    u = OrganizationUpdate()
+    assert u.name is None
+    assert u.slug is None
+    assert u.org_type is None
+
+
+def test_org_update_partial_name_only():
+    u = OrganizationUpdate(name="New Name")
+    assert u.name == "New Name"
+    assert u.slug is None
+    assert u.org_type is None
+
+
+def test_org_update_invalid_org_type():
+    with pytest.raises(ValidationError, match="org_type must be one of"):
+        OrganizationUpdate(org_type="nonexistent_type")
+
+
+def test_org_update_invalid_slug_pattern():
+    with pytest.raises(ValidationError):
+        OrganizationUpdate(slug="UPPERCASE_NOT_ALLOWED")
+
+
+# ---------------------------------------------------------------------------
+# RoleRead / PermissionRead schema
+# ---------------------------------------------------------------------------
+
+from app.schemas.identity import PermissionRead, RoleRead  # noqa: E402
+
+
+def test_role_read_default_permissions_is_empty_list():
+    role = RoleRead(
+        id=uuid.uuid4(),
+        name="student",
+        display_name="Student",
+        description=None,
+        is_system_role=True,
+    )
+    assert role.permissions == []
+
+
+def test_role_read_with_permissions():
+    """RoleRead correctly holds a list of PermissionRead objects."""
+    perm = PermissionRead(
+        id=uuid.uuid4(),
+        name="scenarios.read",
+        display_name="View Scenarios",
+        resource="scenarios",
+        action="read",
+        description=None,
+    )
+    role = RoleRead(
+        id=uuid.uuid4(),
+        name="student",
+        display_name="Student",
+        description=None,
+        is_system_role=True,
+        permissions=[perm],
+    )
+    assert len(role.permissions) == 1
+    assert role.permissions[0].name == "scenarios.read"
+    assert role.permissions[0].resource == "scenarios"

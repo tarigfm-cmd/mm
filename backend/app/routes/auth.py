@@ -2,13 +2,14 @@
 Authentication endpoints: register, login, token refresh, profile.
 """
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.core.dependencies import get_current_user
 from app.core.security import (
     create_access_token,
@@ -28,8 +29,23 @@ from app.schemas.identity import (
     UserRead,
     UserUpdate,
 )
+from app.services.audit import log_action
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+async def _prune_expired_tokens(user_id: uuid.UUID, db: AsyncSession) -> None:
+    """Delete revoked or expired refresh tokens for one user."""
+    now = datetime.now(timezone.utc)
+    await db.execute(
+        delete(RefreshToken).where(
+            RefreshToken.user_id == user_id,
+            or_(
+                RefreshToken.is_revoked.is_(True),
+                RefreshToken.expires_at < now,
+            ),
+        )
+    )
 
 
 @router.post(
@@ -40,9 +56,9 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 )
 async def register(
     body: UserCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> UserRead:
-    # Check uniqueness
     existing_email = await db.execute(select(User).where(User.email == body.email))
     if existing_email.scalar_one_or_none():
         raise HTTPException(
@@ -63,6 +79,17 @@ async def register(
         full_name=body.full_name,
     )
     db.add(user)
+    await db.flush()  # populate user.id before audit log
+
+    await log_action(
+        db,
+        action="user.register",
+        actor_user_id=user.id,
+        resource_type="user",
+        resource_id=str(user.id),
+        details={"email": body.email, "username": body.username},
+        ip_address=request.client.host if request.client else None,
+    )
     await db.commit()
     await db.refresh(user)
     return UserRead.model_validate(user)
@@ -95,12 +122,9 @@ async def login(
             detail="Account is disabled.",
         )
 
+    settings = get_settings()
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))
-
-    from app.config import get_settings
-    from datetime import timedelta
-    settings = get_settings()
 
     rt = RefreshToken(
         user_id=user.id,
@@ -109,6 +133,16 @@ async def login(
         device_info=request.headers.get("User-Agent", "")[:500],
     )
     db.add(rt)
+
+    await log_action(
+        db,
+        action="user.login",
+        actor_user_id=user.id,
+        resource_type="user",
+        resource_id=str(user.id),
+        ip_address=request.client.host if request.client else None,
+    )
+    await _prune_expired_tokens(user.id, db)
     await db.commit()
 
     return TokenResponse(
@@ -153,19 +187,15 @@ async def refresh_tokens(
     if stored is None:
         raise invalid
 
-    # Rotate: revoke old, issue new
     stored.is_revoked = True
 
     user = await db.get(User, user_id)
     if user is None or not user.is_active:
         raise invalid
 
+    settings = get_settings()
     new_access = create_access_token(str(user.id))
     new_refresh = create_refresh_token(str(user.id))
-
-    from app.config import get_settings
-    from datetime import timedelta
-    settings = get_settings()
 
     new_rt = RefreshToken(
         user_id=user.id,
@@ -173,6 +203,15 @@ async def refresh_tokens(
         expires_at=datetime.now(timezone.utc) + timedelta(days=settings.jwt_refresh_token_expire_days),
     )
     db.add(new_rt)
+
+    await log_action(
+        db,
+        action="auth.token_refresh",
+        actor_user_id=user.id,
+        resource_type="user",
+        resource_id=str(user.id),
+    )
+    await _prune_expired_tokens(user.id, db)
     await db.commit()
 
     return TokenResponse(
@@ -227,6 +266,7 @@ async def update_me(
 )
 async def logout(
     body: RefreshRequest,
+    request: Request,
     current_user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -240,4 +280,13 @@ async def logout(
     stored = result.scalar_one_or_none()
     if stored:
         stored.is_revoked = True
-        await db.commit()
+
+    await log_action(
+        db,
+        action="user.logout",
+        actor_user_id=current_user.id,
+        resource_type="user",
+        resource_id=str(current_user.id),
+        ip_address=request.client.host if request.client else None,
+    )
+    await db.commit()

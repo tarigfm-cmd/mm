@@ -33,6 +33,16 @@ Goal: Secure identity foundation before any user-facing features.
 - [ ] Profile update endpoint
 - [ ] Frontend auth integration (login/register pages, token storage)
 
+## Known Debt Closure Gate (Complete)
+
+Goal: Fix documented architectural debt before building new modules.
+
+- [x] AuditLog written for all identity and org actions (register, login, logout, token refresh, org create/update, member add/update/remove)
+- [x] `RoleRead.permissions` now loaded via eager join (was always `[]`)
+- [x] `ScenarioResponse.interaction_count` accurate in `get_scenario` (was always `0`)
+- [x] Organization PATCH uses `OrganizationUpdate` with all-optional fields (was requiring all fields)
+- [x] Expired/revoked refresh tokens pruned per-user on login and token refresh
+
 ## Phase 2 — Users & Auth (continued)
 
 Goal: Full user-facing auth and profile features.

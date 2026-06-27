@@ -173,12 +173,31 @@ http interceptor (on 401 from any non-auth endpoint):
      └─ Refresh fails → clearAuth() + redirect /login
 ```
 
+## Audit Logging
+
+`app/services/audit.py` provides a single `log_action(db, *, action, ...)` coroutine that appends an immutable `AuditLog` row to the current session. The caller owns the commit boundary — `log_action` does not flush or commit.
+
+**Actions logged:**
+
+| Action | Trigger |
+|--------|---------|
+| `user.register` | New user created |
+| `user.login` | Successful password authentication |
+| `user.logout` | Refresh token revoked via logout endpoint |
+| `auth.token_refresh` | Refresh token rotated |
+| `org.create` | Organization created |
+| `org.update` | Organization name / slug / type changed |
+| `org.member_added` | Member added (or re-activated) |
+| `org.member_role_updated` | Member's role changed |
+| `org.member_removed` | Member deactivated |
+
+**Fields stored:** `user_id` (actor), `organization_id` (where relevant), `action`, `resource_type`, `resource_id`, `extra_data` (safe metadata — never passwords or raw token values), `ip_address`, `created_at`.
+
+Refresh token pruning runs inside the same DB transaction as `login` and `refresh_tokens`: any row for the user where `is_revoked=True` OR `expires_at < now` is deleted before the commit.
+
 ## Known Limitations & Technical Debt
 
 1. **Email verification**: Column and `is_verified` flag exist; no verification flow is implemented.
-2. **AuditLog**: Table is migrated and the model relationship is wired, but no code writes audit records yet.
-3. **Expired refresh token cleanup**: No background job prunes `is_revoked=True` or expired rows from `refresh_tokens`.
-4. **`RoleRead.permissions`**: The list_roles endpoint returns roles without loading permissions; the `permissions` array is always empty.
-5. **Organization PATCH schema**: Uses `OrganizationCreate` (all required fields) rather than a partial-update schema.
-6. **`ScenarioResponse.interaction_count`**: The `get_scenario` endpoint returns `interaction_count=0` always; the batch count is only computed in `list_scenarios`.
-7. **Progress tracking requires authenticated submissions**: Anonymous scenario attempts (no Bearer token) are not attributed to users and do not appear in progress analytics.
+2. **Expired refresh token background sweep**: Pruning runs per-user on login/refresh; no scheduled job removes tokens for inactive users.
+3. **`RoleRead.permissions`**: Always returns `[]` in tests because no permissions are seeded. The query is correct (eager-loads via `role_permissions → permission`); permissions will appear once they are inserted.
+4. **Progress tracking requires authenticated submissions**: Anonymous scenario attempts (no Bearer token) are not attributed to users and do not appear in progress analytics.
