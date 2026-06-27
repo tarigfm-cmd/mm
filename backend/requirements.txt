@@ -32,8 +32,10 @@ pytesseract==0.3.10
 slowapi==0.1.9
 
 # Security (auth-ready)
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
+# python-jose and passlib[bcrypt] are kept for reference but broken in this env
+# (Rust pyo3/_cffi_backend failure). Active replacements:
+joserfc>=0.12.0          # JWT — HS256/RS256, fully working
+email-validator>=2.1.0   # required by pydantic EmailStr
 
 # Monitoring
 sentry-sdk[fastapi]==1.39.1

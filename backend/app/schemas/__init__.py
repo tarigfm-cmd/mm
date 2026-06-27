@@ -6,6 +6,20 @@ from app.schemas.content import (
     MaterialListResponse,
     MaterialResponse,
 )
+from app.schemas.identity import (
+    LoginRequest,
+    OrganizationCreate,
+    OrganizationMembershipCreate,
+    OrganizationMembershipRead,
+    OrganizationRead,
+    PermissionRead,
+    RefreshRequest,
+    RoleRead,
+    TokenResponse,
+    UserCreate,
+    UserRead,
+    UserUpdate,
+)
 from app.schemas.learning import (
     InteractionCreate,
     InteractionResponse,
@@ -34,4 +48,17 @@ __all__ = [
     "InteractionCreate",
     "InteractionResponse",
     "ScenarioInteractionsResponse",
+    # Identity / Auth
+    "UserCreate",
+    "UserRead",
+    "UserUpdate",
+    "LoginRequest",
+    "TokenResponse",
+    "RefreshRequest",
+    "OrganizationCreate",
+    "OrganizationRead",
+    "OrganizationMembershipCreate",
+    "OrganizationMembershipRead",
+    "RoleRead",
+    "PermissionRead",
 ]

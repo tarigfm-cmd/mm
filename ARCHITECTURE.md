@@ -43,14 +43,15 @@
 
 ## Backend Layer Structure
 
-### Current (Phase 1)
+### Current (Phase 1 + Identity milestone)
 
 ```
 app/
 ├── core/                    # Cross-cutting infrastructure
-│   └── security.py          # Stub — JWT/RBAC in Phase 2
+│   ├── security.py          # PBKDF2 password hashing + joserfc JWT
+│   └── dependencies.py      # FastAPI auth dependencies (get_current_user, RBAC helpers)
 │
-├── domains/                 # Bounded-context packages (stubs for Phase 2+)
+├── domains/                 # Bounded-context packages (stubs for Phase 3+)
 │   ├── users/
 │   ├── organizations/
 │   ├── assessments/
@@ -62,17 +63,23 @@ app/
 │
 ├── models/                  # SQLAlchemy ORM models
 │   ├── content.py           # Material
-│   └── learning.py          # Scenario, Interaction
+│   ├── learning.py          # Scenario, Interaction
+│   └── identity.py          # User, Organization, OrganizationMembership,
+│                            # Role, Permission, RolePermission,
+│                            # RefreshToken, AuditLog
 │
 ├── routes/                  # FastAPI routers (active endpoints)
 │   ├── health.py
+│   ├── auth.py              # /api/auth — register, login, refresh, me, logout
 │   ├── materials.py
 │   └── scenarios.py
 │
 ├── schemas/                 # Pydantic I/O schemas
 │   ├── platform.py          # HealthResponse, PaginatedResponse
 │   ├── content.py           # Material*
-│   └── learning.py          # Scenario*, Interaction*, ScenarioGenerate*
+│   ├── learning.py          # Scenario*, Interaction*, ScenarioGenerate*
+│   └── identity.py          # User*, Organization*, Role*, Permission*,
+│                            # LoginRequest, TokenResponse, RefreshRequest
 │
 ├── services/                # Domain-agnostic application services
 │   ├── ai_service.py        # Claude scenario generation + answer evaluation
@@ -81,10 +88,66 @@ app/
 ├── utils/
 │   └── validators.py        # File validation, upload path helpers
 │
-├── config.py                # pydantic-settings — all env vars
+├── config.py                # pydantic-settings — all env vars (incl. JWT)
 ├── database.py              # Async engine, session factory, Base
 └── main.py                  # App factory, middleware, lifespan
 ```
+
+## Identity & RBAC Architecture
+
+### User Identity
+
+- One `User` row per person; holds hashed password (PBKDF2-SHA256, 260 000 iterations).
+- `is_superuser = True` grants platform-admin bypass on all permission checks.
+- `is_active` / `is_verified` flags control login access.
+
+### Multi-Tenancy
+
+- `Organization` rows represent tenants (university, pharmacy_chain, hospital,
+  training_center, enterprise, individual_workspace).
+- A `User` may belong to many organizations via `OrganizationMembership`.
+- Each membership carries exactly **one** `Role` within that org.
+
+### Roles (system-seeded)
+
+| Name | Display | Typical scope |
+|------|---------|---------------|
+| `student` | Student | Enrolled learners |
+| `pharmacist` | Pharmacist | CPD pharmacists |
+| `educator` | Educator | Content creators |
+| `content_reviewer` | Content Reviewer | Evidence workflow |
+| `institution_admin` | Institution Admin | Org management |
+| `platform_admin` | Platform Admin | Full platform access |
+
+### Permissions
+
+Fine-grained `Permission` rows (`resource` + `action`) are attached to roles via
+`RolePermission`. Platform admins bypass all permission checks.
+
+### Auth Flow
+
+```
+POST /api/auth/register  →  create User (hashed password)
+POST /api/auth/login     →  verify password → issue access + refresh JWTs
+                             store hashed refresh token in refresh_tokens
+POST /api/auth/refresh   →  verify refresh JWT + DB record → rotate tokens
+GET  /api/auth/me        →  decode Bearer token → return UserRead
+POST /api/auth/logout    →  revoke refresh token in DB
+```
+
+Access tokens: HS256 JWT, 30-minute TTL (configurable via `JWT_ACCESS_TOKEN_EXPIRE_MINUTES`).
+Refresh tokens: HS256 JWT, 30-day TTL (configurable via `JWT_REFRESH_TOKEN_EXPIRE_DAYS`).
+Refresh tokens are stored as SHA-256 hashes in the DB and rotated on every use.
+
+### RBAC FastAPI Dependencies
+
+| Dependency | Purpose |
+|-----------|---------|
+| `get_current_user` | Decode Bearer JWT → load User |
+| `require_superuser` | Enforce `is_superuser = True` |
+| `require_org_role(role_name)` | Enforce specific role within org |
+| `get_user_org_membership` | Load membership for org-scoped routes |
+| `has_permission(perm_name)` | Check named permission within org |
 
 ## Database Schema (Phase 1)
 
@@ -129,7 +192,9 @@ interactions
   created_at           TIMESTAMPTZ
 ```
 
-Planned Phase 2 tables: `users`, `roles`, `user_roles`, `organizations`, `memberships`, `subscriptions`.
+Identity tables (Migration 002): `users`, `organizations`, `roles`, `permissions`, `role_permissions`, `organization_memberships`, `refresh_tokens`, `audit_logs`.
+
+Planned Phase 3+ tables: `subscriptions`, `osce_stations`, `assessments`, `game_sessions`.
 
 ## Data Flow
 
@@ -195,12 +260,16 @@ src/
 
 **Session management:** Anonymous learner sessions use a UUID stored in `localStorage` (key: `pharmacy_ai_session_id`). Each API request carries this as `X-Session-Id` header.
 
-## Security (Phase 1)
+## Security
 
 - File upload: extension whitelist, 50 MB size cap, UUID-prefixed storage names
 - Rate limiting: SlowAPI (30 req/min general, 5 req/min upload)
 - CORS: origins configured via `CORS_ORIGINS` env var
-- No authentication yet — all endpoints are public in Phase 1
+- **Auth (Identity milestone):** JWT Bearer tokens via `joserfc` (HS256); passwords hashed
+  with PBKDF2-SHA256 (260 000 iterations, stdlib `hashlib`). Refresh tokens stored as
+  SHA-256 hashes and rotated on every use.
+- Public endpoints (Phase 1 routes) remain unauthenticated; new protected routes use
+  `Depends(get_current_user)` from `app/core/dependencies.py`.
 
 ## Caching (Phase 2 planned)
 

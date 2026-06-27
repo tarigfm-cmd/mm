@@ -62,6 +62,14 @@ class Settings(BaseSettings):
             return [ext.strip().lower() for ext in v.split(",")]
         return v
 
+    # ── JWT / Auth ────────────────────────────────────────────────────────────
+    jwt_secret_key: str = Field(
+        default="change-me-jwt-secret-key-min-32-chars-00000000000"
+    )
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 30
+    jwt_refresh_token_expire_days: int = 30
+
     # ── Rate Limiting ─────────────────────────────────────────────────────────
     rate_limit_per_minute: int = 60
     rate_limit_upload_per_minute: int = 10

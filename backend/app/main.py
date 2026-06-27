@@ -13,6 +13,7 @@ from slowapi.util import get_remote_address
 
 from app.config import get_settings
 from app.database import Base, engine
+from app.routes import auth as auth_router
 from app.routes import health as health_router
 from app.routes import materials as materials_router
 from app.routes import scenarios as scenarios_router
@@ -70,6 +71,7 @@ app.add_middleware(
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 app.include_router(health_router.router)
+app.include_router(auth_router.router)
 app.include_router(materials_router.router)
 app.include_router(scenarios_router.router)
 

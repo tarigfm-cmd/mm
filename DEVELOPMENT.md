@@ -24,6 +24,12 @@ ANTHROPIC_API_KEY=sk-ant-...
 # Keep defaults for local Docker dev
 DB_PASSWORD=postgres
 SECRET_KEY=change-me-in-production-min-50-chars-000000000000
+
+# Auth / JWT (generate with: python3 -c "import secrets; print(secrets.token_hex(32))")
+JWT_SECRET_KEY=change-me-jwt-secret-key-min-32-chars-00000000000
+JWT_ALGORITHM=HS256
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+JWT_REFRESH_TOKEN_EXPIRE_DAYS=30
 ```
 
 ## Option A — Docker Compose (recommended)
@@ -100,31 +106,44 @@ npx tsc --noEmit
 mm/
 ├── backend/
 │   ├── app/
-│   │   ├── core/           # Security stubs (JWT/RBAC Phase 2)
-│   │   ├── domains/        # Future bounded-context packages
+│   │   ├── core/
+│   │   │   ├── security.py      # PBKDF2 hashing + joserfc JWT
+│   │   │   └── dependencies.py  # FastAPI auth/RBAC dependencies
+│   │   ├── domains/             # Bounded-context stubs (Phase 3+)
 │   │   ├── models/
-│   │   │   ├── content.py  # Material ORM model
-│   │   │   └── learning.py # Scenario, Interaction ORM models
-│   │   ├── routes/         # FastAPI routers
+│   │   │   ├── content.py       # Material ORM model
+│   │   │   ├── learning.py      # Scenario, Interaction ORM models
+│   │   │   └── identity.py      # User, Org, Role, Permission, etc.
+│   │   ├── routes/              # FastAPI routers
+│   │   │   ├── health.py
+│   │   │   ├── auth.py          # /api/auth endpoints
+│   │   │   ├── materials.py
+│   │   │   └── scenarios.py
 │   │   ├── schemas/
-│   │   │   ├── platform.py # HealthResponse, PaginatedResponse
-│   │   │   ├── content.py  # Material schemas
-│   │   │   └── learning.py # Scenario & Interaction schemas
+│   │   │   ├── platform.py      # HealthResponse, PaginatedResponse
+│   │   │   ├── content.py       # Material schemas
+│   │   │   ├── learning.py      # Scenario & Interaction schemas
+│   │   │   └── identity.py      # User, Org, Auth schemas
 │   │   ├── services/
-│   │   │   ├── ai_service.py       # Anthropic Claude integration
-│   │   │   └── document_parser.py  # Text extraction
+│   │   │   ├── ai_service.py    # Anthropic Claude integration
+│   │   │   └── document_parser.py
 │   │   └── utils/validators.py
-│   ├── alembic/            # Database migrations
+│   ├── alembic/
+│   │   └── versions/
+│   │       ├── 001_initial_schema.py
+│   │       └── 002_identity_rbac.py
 │   ├── tests/
-│   │   ├── conftest.py     # SQLite async test fixtures
+│   │   ├── conftest.py          # SQLite async test fixtures
 │   │   ├── test_health.py
-│   │   └── test_materials.py
+│   │   ├── test_materials.py
+│   │   ├── test_security.py     # Password + JWT tests
+│   │   └── test_rbac.py         # Schema + role/permission tests
 │   └── requirements.txt
 └── frontend/
     └── src/
-        ├── store/appStore.ts   # Zustand platform store
-        ├── services/api.ts     # Typed API client
-        └── types/index.ts      # TypeScript interfaces
+        ├── store/appStore.ts    # Zustand platform store
+        ├── services/api.ts      # Typed API client
+        └── types/index.ts       # TypeScript interfaces
 ```
 
 ## Key Design Decisions

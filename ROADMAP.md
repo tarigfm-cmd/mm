@@ -14,17 +14,35 @@ Goal: Working platform with content ingestion, AI case generation, and interacti
 - [x] Domain stub packages for all Phase 2+ modules
 - [x] Backend model/schema split by domain
 
-## Phase 2 — Users & Auth
+## Identity Milestone — Core RBAC & Multi-Tenancy (Current)
 
-Goal: Real accounts, multi-role access, institution support.
+Goal: Secure identity foundation before any user-facing features.
 
-- [ ] User registration & email verification
-- [ ] JWT authentication (python-jose, passlib bcrypt)
-- [ ] Role-based access control: learner | educator | admin
-- [ ] Institution (organization) accounts
-- [ ] Learner-to-institution linking
+- [x] User model (PBKDF2-SHA256 passwords, is_superuser platform-admin flag)
+- [x] Organization model (6 org types: university, pharmacy_chain, hospital, training_center, enterprise, individual_workspace)
+- [x] OrganizationMembership — one user → many orgs, each with one Role
+- [x] Role + Permission + RolePermission models (6 system roles seeded)
+- [x] RefreshToken model (hashed, rotated on use)
+- [x] AuditLog model
+- [x] JWT auth (joserfc HS256) — access (30 min) + refresh (30 day) tokens
+- [x] Auth routes: register, login, refresh, me, logout
+- [x] RBAC FastAPI dependencies: get_current_user, require_superuser, require_org_role, has_permission
+- [x] Alembic migration 002 for all 8 identity tables
+- [x] 44 tests passing (password hashing, JWT, schema validation, role/permission logic)
+- [ ] Email verification flow
+- [ ] Profile update endpoint
+- [ ] Frontend auth integration (login/register pages, token storage)
+
+## Phase 2 — Users & Auth (continued)
+
+Goal: Full user-facing auth and profile features.
+
+- [ ] Email verification with token link
+- [ ] Password reset flow
 - [ ] Profile pages & progress history
 - [ ] Session replacement: auth tokens instead of anonymous UUIDs
+- [ ] Frontend login / register pages
+- [ ] Protected frontend routes
 
 Domain packages: `domains/users/`, `domains/organizations/`
 
