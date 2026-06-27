@@ -59,6 +59,7 @@ class UserRead(BaseModel):
     is_verified: bool
     is_superuser: bool
     created_at: datetime
+    updated_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -146,3 +147,38 @@ class OrganizationMembershipCreate(BaseModel):
     user_id: uuid.UUID
     organization_id: uuid.UUID
     role_id: uuid.UUID
+
+
+class OrgWithRole(BaseModel):
+    id: uuid.UUID
+    name: str
+    slug: str
+    org_type: str
+    is_active: bool
+    member_role: str
+    member_count: int
+    created_at: datetime
+
+    model_config = {"from_attributes": False}
+
+
+class MemberRead(BaseModel):
+    user_id: uuid.UUID
+    username: str
+    email: str
+    full_name: Optional[str]
+    role_name: str
+    role_display_name: str
+    is_active: bool
+    joined_at: datetime
+
+    model_config = {"from_attributes": False}
+
+
+class AddMemberRequest(BaseModel):
+    email: EmailStr
+    role_name: str = Field(default="student")
+
+
+class UpdateMemberRoleRequest(BaseModel):
+    role_name: str = Field(..., min_length=1)

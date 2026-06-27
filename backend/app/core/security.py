@@ -7,6 +7,7 @@ environment. hashlib.pbkdf2_hmac is stdlib; joserfc is the JWT library.
 import base64
 import hashlib
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -62,6 +63,7 @@ def create_access_token(subject: str, extra_claims: dict[str, Any] | None = None
     exp = now + timedelta(minutes=settings.jwt_access_token_expire_minutes)
     claims: dict[str, Any] = {
         "sub": subject,
+        "jti": uuid.uuid4().hex,
         "iat": int(now.timestamp()),
         "exp": int(exp.timestamp()),
         "type": "access",
@@ -78,6 +80,7 @@ def create_refresh_token(subject: str) -> str:
     exp = now + timedelta(days=settings.jwt_refresh_token_expire_days)
     claims: dict[str, Any] = {
         "sub": subject,
+        "jti": uuid.uuid4().hex,
         "iat": int(now.timestamp()),
         "exp": int(exp.timestamp()),
         "type": "refresh",

@@ -11,6 +11,15 @@ from app.main import app
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
+_ROLES = [
+    ("student", "Student"),
+    ("pharmacist", "Pharmacist"),
+    ("educator", "Educator"),
+    ("content_reviewer", "Content Reviewer"),
+    ("institution_admin", "Institution Administrator"),
+    ("platform_admin", "Platform Administrator"),
+]
+
 
 @pytest.fixture(scope="session")
 def event_loop():
@@ -21,6 +30,7 @@ def event_loop():
 
 @pytest_asyncio.fixture(scope="session")
 async def test_engine():
+    """Session-scoped engine for unit tests that don't write to the DB."""
     engine = create_async_engine(TEST_DATABASE_URL, echo=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -31,7 +41,29 @@ async def test_engine():
 
 
 @pytest_asyncio.fixture
+async def fresh_engine():
+    """Per-test engine: isolated in-memory DB with tables + seeded roles."""
+    from app.models.identity import Role
+
+    engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with AsyncSession(engine, expire_on_commit=False) as seed_session:
+        for name, display_name in _ROLES:
+            seed_session.add(Role(name=name, display_name=display_name, is_system_role=True))
+        await seed_session.commit()
+
+    yield engine
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
 async def db_session(test_engine) -> AsyncIterator[AsyncSession]:
+    """Per-test session on the session-scoped engine (for unit tests)."""
     TestSessionLocal = async_sessionmaker(
         bind=test_engine, class_=AsyncSession, expire_on_commit=False
     )
@@ -41,9 +73,15 @@ async def db_session(test_engine) -> AsyncIterator[AsyncSession]:
 
 
 @pytest_asyncio.fixture
-async def client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
+async def client(fresh_engine) -> AsyncIterator[AsyncClient]:
+    """Per-test HTTP client backed by a fully isolated in-memory database."""
+    SessionLocal = async_sessionmaker(
+        bind=fresh_engine, class_=AsyncSession, expire_on_commit=False
+    )
+
     async def override_get_db():
-        yield db_session
+        async with SessionLocal() as session:
+            yield session
 
     app.dependency_overrides[get_db] = override_get_db
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
