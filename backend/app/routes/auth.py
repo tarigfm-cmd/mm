@@ -98,28 +98,23 @@ async def login(
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))
 
-    # Store hashed refresh token
-    rt = RefreshToken(
-        user_id=user.id,
-        token_hash=hash_token(refresh_token),
-        expires_at=datetime.now(timezone.utc).replace(
-            microsecond=0
-        ),  # real exp set by JWT; this is for cleanup queries
-        device_info=request.headers.get("User-Agent", "")[:500],
-    )
     from app.config import get_settings
     from datetime import timedelta
     settings = get_settings()
-    rt.expires_at = datetime.now(timezone.utc) + timedelta(days=settings.jwt_refresh_token_expire_days)
+
+    rt = RefreshToken(
+        user_id=user.id,
+        token_hash=hash_token(refresh_token),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.jwt_refresh_token_expire_days),
+        device_info=request.headers.get("User-Agent", "")[:500],
+    )
     db.add(rt)
     await db.commit()
 
-    from app.config import get_settings as _gs
-    s = _gs()
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
-        expires_in=s.jwt_access_token_expire_minutes * 60,
+        expires_in=settings.jwt_access_token_expire_minutes * 60,
     )
 
 

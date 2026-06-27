@@ -6,7 +6,8 @@
 ┌────────────────────────────────────────────────────────────────────┐
 │  Frontend (React 18 + TypeScript + Vite)                           │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │  Dashboard │ Content Library │ Case Practice │ Assessments  │   │
+│  │  Login / Register │ Dashboard │ Scenarios │ Organizations   │   │
+│  │  Materials Upload │ Progress                                │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 └────────────────────────────────────────────────────────────────────┘
                           │ HTTPS / REST (JSON)
@@ -19,19 +20,23 @@
 ┌────────────────────────────────────────────────────────────────────┐
 │  Backend (FastAPI — async Python 3.11)                             │
 │                                                                    │
-│  Routes (Phase 1 active)           Planned domains                 │
-│  ├── /api/health                   ├── users/                      │
-│  ├── /api/materials/*              ├── organizations/              │
-│  └── /api/scenarios/*             ├── assessments/                │
-│                                    ├── osce/                       │
-│  Services                          ├── games/                      │
-│  ├── ai_service.py (Claude)        ├── analytics/                  │
-│  └── document_parser.py           ├── subscriptions/              │
-│                                    └── content_review/             │
+│  Active routes                     Domain stubs (Phase 3+)         │
+│  ├── /api/health                   ├── assessments/                │
+│  ├── /api/auth/*                   ├── osce/                       │
+│  ├── /api/materials/*              ├── games/                      │
+│  ├── /api/scenarios/*              ├── analytics/                  │
+│  ├── /api/orgs/*                   ├── subscriptions/              │
+│  ├── /api/roles                    └── content_review/             │
+│  └── /api/progress                                                 │
+│                                                                    │
+│  Services                                                          │
+│  ├── ai_service.py (Claude — scenario gen + answer eval)           │
+│  └── document_parser.py (PDF/DOCX text extraction)                 │
+│                                                                    │
 │  Infrastructure                                                    │
-│  ├── database.py (SQLAlchemy 2.0 async)                           │
-│  ├── config.py (pydantic-settings)                                │
-│  └── core/security.py (Phase 2 — JWT + RBAC)                     │
+│  ├── database.py (SQLAlchemy 2.0 async, asyncpg in prod)          │
+│  ├── config.py (pydantic-settings)                                 │
+│  └── core/security.py (PBKDF2 + joserfc JWT)                      │
 └────────────────────────────────────────────────────────────────────┘
           │                   │                    │
           ▼                   ▼                    ▼
@@ -41,251 +46,139 @@
    └────────────┘     └─────────────┘     └──────────────┘
 ```
 
-## Backend Layer Structure
-
-### Current (Phase 1 + Identity milestone)
+## Data Model
 
 ```
-app/
-├── core/                    # Cross-cutting infrastructure
-│   ├── security.py          # PBKDF2 password hashing + joserfc JWT
-│   └── dependencies.py      # FastAPI auth dependencies (get_current_user, RBAC helpers)
-│
-├── domains/                 # Bounded-context packages (stubs for Phase 3+)
-│   ├── users/
-│   ├── organizations/
-│   ├── assessments/
-│   ├── osce/
-│   ├── games/
-│   ├── analytics/
-│   ├── subscriptions/
-│   └── content_review/
-│
-├── models/                  # SQLAlchemy ORM models
-│   ├── content.py           # Material
-│   ├── learning.py          # Scenario, Interaction
-│   └── identity.py          # User, Organization, OrganizationMembership,
-│                            # Role, Permission, RolePermission,
-│                            # RefreshToken, AuditLog
-│
-├── routes/                  # FastAPI routers (active endpoints)
-│   ├── health.py
-│   ├── auth.py              # /api/auth — register, login, refresh, me, logout
-│   ├── materials.py
-│   └── scenarios.py
-│
-├── schemas/                 # Pydantic I/O schemas
-│   ├── platform.py          # HealthResponse, PaginatedResponse
-│   ├── content.py           # Material*
-│   ├── learning.py          # Scenario*, Interaction*, ScenarioGenerate*
-│   └── identity.py          # User*, Organization*, Role*, Permission*,
-│                            # LoginRequest, TokenResponse, RefreshRequest
-│
-├── services/                # Domain-agnostic application services
-│   ├── ai_service.py        # Claude scenario generation + answer evaluation
-│   └── document_parser.py   # PDF/DOCX/TXT/image text extraction
-│
-├── utils/
-│   └── validators.py        # File validation, upload path helpers
-│
-├── config.py                # pydantic-settings — all env vars (incl. JWT)
-├── database.py              # Async engine, session factory, Base
-└── main.py                  # App factory, middleware, lifespan
-```
+users
+├── id (UUID PK)
+├── email (unique)
+├── username (unique)
+├── hashed_password  (PBKDF2-SHA256, 260k iterations)
+├── full_name
+├── is_active / is_verified / is_superuser
+└── created_at / updated_at
 
-## Identity & RBAC Architecture
+organizations
+├── id (UUID PK)
+├── name / slug (unique) / org_type
+├── is_active / settings (JSON)
+└── created_at / updated_at
 
-### User Identity
+organization_memberships         (user ↔ org, unique per pair)
+├── user_id → users.id
+├── organization_id → organizations.id
+├── role_id → roles.id
+├── is_active
+└── joined_at
 
-- One `User` row per person; holds hashed password (PBKDF2-SHA256, 260 000 iterations).
-- `is_superuser = True` grants platform-admin bypass on all permission checks.
-- `is_active` / `is_verified` flags control login access.
+roles                            (seeded by migration 002)
+├── student / pharmacist / educator
+├── content_reviewer / institution_admin / platform_admin
+└── is_system_role = True
 
-### Multi-Tenancy
+permissions / role_permissions   (defined, not yet populated)
 
-- `Organization` rows represent tenants (university, pharmacy_chain, hospital,
-  training_center, enterprise, individual_workspace).
-- A `User` may belong to many organizations via `OrganizationMembership`.
-- Each membership carries exactly **one** `Role` within that org.
+refresh_tokens
+├── user_id → users.id
+├── token_hash (SHA-256 of JWT, unique)
+├── expires_at / is_revoked
+└── device_info
 
-### Roles (system-seeded)
+audit_logs                       (table exists; not yet written to)
+├── user_id / organization_id
+├── action / resource_type / resource_id
+└── extra_data / ip_address
 
-| Name | Display | Typical scope |
-|------|---------|---------------|
-| `student` | Student | Enrolled learners |
-| `pharmacist` | Pharmacist | CPD pharmacists |
-| `educator` | Educator | Content creators |
-| `content_reviewer` | Content Reviewer | Evidence workflow |
-| `institution_admin` | Institution Admin | Org management |
-| `platform_admin` | Platform Admin | Full platform access |
-
-### Permissions
-
-Fine-grained `Permission` rows (`resource` + `action`) are attached to roles via
-`RolePermission`. Platform admins bypass all permission checks.
-
-### Auth Flow
-
-```
-POST /api/auth/register  →  create User (hashed password)
-POST /api/auth/login     →  verify password → issue access + refresh JWTs
-                             store hashed refresh token in refresh_tokens
-POST /api/auth/refresh   →  verify refresh JWT + DB record → rotate tokens
-GET  /api/auth/me        →  decode Bearer token → return UserRead
-POST /api/auth/logout    →  revoke refresh token in DB
-```
-
-Access tokens: HS256 JWT, 30-minute TTL (configurable via `JWT_ACCESS_TOKEN_EXPIRE_MINUTES`).
-Refresh tokens: HS256 JWT, 30-day TTL (configurable via `JWT_REFRESH_TOKEN_EXPIRE_DAYS`).
-Refresh tokens are stored as SHA-256 hashes in the DB and rotated on every use.
-
-### RBAC FastAPI Dependencies
-
-| Dependency | Purpose |
-|-----------|---------|
-| `get_current_user` | Decode Bearer JWT → load User |
-| `require_superuser` | Enforce `is_superuser = True` |
-| `require_org_role(role_name)` | Enforce specific role within org |
-| `get_user_org_membership` | Load membership for org-scoped routes |
-| `has_permission(perm_name)` | Check named permission within org |
-
-## Database Schema (Phase 1)
-
-All primary keys use UUID v4 (cross-database compatible via `sqlalchemy.Uuid`).
-
-```
 materials
-  id            UUID PK
-  title         VARCHAR(255)
-  description   TEXT nullable
-  file_name     VARCHAR(255)
-  file_path     VARCHAR(500)
-  file_size     BIGINT
-  file_type     VARCHAR(50)      -- pdf | docx | txt | png | jpg | jpeg
-  content_text  TEXT nullable    -- populated by background task
-  created_at    TIMESTAMPTZ
-  updated_at    TIMESTAMPTZ
+├── title / file_name / file_path / file_type / file_size
+├── content_text (extracted)
+└── created_at / updated_at
 
 scenarios
-  id              UUID PK
-  material_id     UUID FK → materials.id ON DELETE SET NULL nullable
-  title           VARCHAR(255)
-  clinical_case   TEXT
-  difficulty_level VARCHAR(50)   -- beginner | intermediate | advanced
-  specialty       VARCHAR(100) nullable
-  key_concepts    JSON nullable
-  expected_answer TEXT nullable
-  created_at      TIMESTAMPTZ
-  updated_at      TIMESTAMPTZ
+├── material_id → materials.id (nullable, SET NULL on delete)
+├── title / clinical_case / difficulty_level / specialty
+├── key_concepts (JSON) / expected_answer
+└── created_at / updated_at
 
 interactions
-  id                   UUID PK
-  scenario_id          UUID FK → scenarios.id ON DELETE CASCADE
-  session_id           VARCHAR(255) nullable  -- anonymous browser session
-  user_answer          TEXT
-  ai_feedback          TEXT
-  score                FLOAT nullable         -- 0.0–1.0
-  key_findings         JSON nullable
-  next_steps           JSON nullable
-  strengths            JSON nullable
-  areas_for_improvement JSON nullable
-  created_at           TIMESTAMPTZ
+├── scenario_id → scenarios.id (CASCADE delete)
+├── user_id → users.id (nullable, SET NULL; populated when authenticated)
+├── session_id (anonymous sessions)
+├── user_answer / ai_feedback
+├── score (0–1 float) / key_findings / next_steps / strengths / areas_for_improvement (JSON)
+└── created_at
 ```
 
-Identity tables (Migration 002): `users`, `organizations`, `roles`, `permissions`, `role_permissions`, `organization_memberships`, `refresh_tokens`, `audit_logs`.
-
-Planned Phase 3+ tables: `subscriptions`, `osce_stations`, `assessments`, `game_sessions`.
-
-## Data Flow
-
-### Upload Material → Generate Scenario
+## Authentication Flow
 
 ```
-1. POST /api/materials/upload (multipart)
-2. Validate file type & size
-3. Write bytes to disk (UUID-prefixed filename)
-4. INSERT materials row (content_text = NULL)
-5. BackgroundTask: extract_text() → UPDATE content_text
-6. Client polls GET /api/materials/{id} until has_content = true
-7. POST /api/scenarios/generate
-8. ai_service.generate_scenario(content_text, difficulty_level)
-9. Claude returns structured JSON → INSERT scenarios row
-10. Return ScenarioResponse
+Register  →  POST /api/auth/register  →  User created (is_verified=False)
+Login     →  POST /api/auth/login     →  access_token (JWT, 30 min, in-memory)
+                                     →  refresh_token (JWT, 30 days, localStorage)
+                                     →  RefreshToken row (hashed) stored in DB
+
+Silent    ←  401 on any protected request
+refresh   →  POST /api/auth/refresh  →  old RT revoked, new AT+RT issued (rotation)
+
+Logout    →  POST /api/auth/logout   →  RT marked is_revoked=True in DB
 ```
 
-### Student Answer → AI Feedback
+**Token security:**
+- Access tokens stored in Zustand (memory only) — not in localStorage or cookies
+- Refresh tokens stored in localStorage (`pharmlearn_rt`) — JWTs, verified server-side
+- All refresh tokens stored as SHA-256 hashes in DB (never raw)
+- Each token includes a `jti` (UUID) claim to prevent hash collisions under rapid login
+- Token type claim (`"type": "access"` | `"type": "refresh"`) prevents cross-use
+
+## RBAC Model
+
+Six system roles (seeded by migration 002):
+
+| Role | Scope | Notes |
+|------|-------|-------|
+| `student` | Org | Can practice scenarios |
+| `pharmacist` | Org | Qualified professional building CPD |
+| `educator` | Org | Creates and curates content |
+| `content_reviewer` | Org | Reviews evidence-based content |
+| `institution_admin` | Org | Manages org members and settings |
+| `platform_admin` | Org | Full platform access |
+
+`is_superuser=True` on a User record bypasses **all** org membership and permission checks. This is the operator/Anthropic-staff escape hatch.
+
+Admin operations within an org require `institution_admin` or `platform_admin` membership (`ADMIN_ROLES` set in organizations.py).
+
+## Migrations
+
+| ID | Name | Tables |
+|----|------|--------|
+| 001 | initial_schema | materials, scenarios, interactions |
+| 002 | identity_rbac | users, organizations, roles, permissions, role_permissions, organization_memberships, refresh_tokens, audit_logs |
+| 003 | interaction_user_id | adds `user_id` FK column to interactions |
+
+**Important**: Migrations use `postgresql.UUID` and `postgresql.JSON` — they target PostgreSQL only. Application models use `sqlalchemy.Uuid(as_uuid=True, native_uuid=True)` (cross-DB) so tests can run on SQLite in-memory databases via `Base.metadata.create_all`.
+
+## Frontend Auth Architecture
 
 ```
-1. POST /api/scenarios/{id}/answer
-2. Fetch scenario (clinical_case + expected_answer)
-3. ai_service.evaluate_answer(case, expected, student_answer)
-4. Claude returns score + structured feedback JSON
-5. INSERT interactions row
-6. Return InteractionResponse
+useAuthInit (runs once on app mount)
+  └─ localStorage has refresh token?
+      ├─ No  →  authInitialized=True, user=null  →  ProtectedRoute redirects /login
+      └─ Yes →  POST /api/auth/refresh (authHttp — no interceptors)
+                ├─ OK  →  store access token in memory, store new RT in localStorage
+                │         GET /api/auth/me → setCurrentUser → authInitialized=True
+                └─ Fail → clearStoredRefreshToken() → authInitialized=True → /login
+
+http interceptor (on 401 from any non-auth endpoint):
+  └─ Silent refresh → retry original request with new access token
+     └─ Refresh fails → clearAuth() + redirect /login
 ```
 
-## AI Service
+## Known Limitations & Technical Debt
 
-`app/services/ai_service.py` wraps the Anthropic Python SDK.
-
-- **Model:** configured via `AI_MODEL` (default `claude-sonnet-4-6`)
-- **generate_scenario():** produces a pharmacy clinical case from document text
-- **evaluate_answer():** scores a student's response 0–1 with structured feedback
-- Both functions expect and return plain Python dicts; routes own serialisation.
-- JSON fence stripping handles models that wrap output in markdown code blocks.
-
-## Frontend Architecture
-
-```
-src/
-├── store/
-│   └── appStore.ts        # Zustand platform store (content + learning state)
-├── services/
-│   └── api.ts             # Axios instance, interceptors, typed API methods
-├── types/
-│   └── index.ts           # TypeScript interfaces mirroring backend schemas
-├── components/            # Reusable UI primitives
-│   ├── Navigation.tsx
-│   ├── DifficultyBadge.tsx
-│   ├── ScenarioCard.tsx
-│   ├── MessageBubble.tsx
-│   ├── UploadDropzone.tsx
-│   └── LoadingSpinner.tsx
-└── pages/
-    ├── Dashboard.tsx
-    ├── MaterialsUpload.tsx
-    ├── ScenariosPage.tsx
-    └── ScenarioPage.tsx
-```
-
-**Session management:** Anonymous learner sessions use a UUID stored in `localStorage` (key: `pharmacy_ai_session_id`). Each API request carries this as `X-Session-Id` header.
-
-## Security
-
-- File upload: extension whitelist, 50 MB size cap, UUID-prefixed storage names
-- Rate limiting: SlowAPI (30 req/min general, 5 req/min upload)
-- CORS: origins configured via `CORS_ORIGINS` env var
-- **Auth (Identity milestone):** JWT Bearer tokens via `joserfc` (HS256); passwords hashed
-  with PBKDF2-SHA256 (260 000 iterations, stdlib `hashlib`). Refresh tokens stored as
-  SHA-256 hashes and rotated on every use.
-- Public endpoints (Phase 1 routes) remain unauthenticated; new protected routes use
-  `Depends(get_current_user)` from `app/core/dependencies.py`.
-
-## Caching (Phase 2 planned)
-
-Redis is provisioned but not yet used for application caching.
-Planned uses: generated scenario cache, rate limit state, session data.
-
-## Module Boundaries (Future)
-
-Each domain package in `app/domains/` will own:
-```
-domains/<name>/
-  ├── models.py    # SQLAlchemy ORM models
-  ├── schemas.py   # Pydantic I/O schemas
-  ├── router.py    # FastAPI APIRouter
-  ├── service.py   # Business logic
-  └── __init__.py
-```
-
-Routes registered in `main.py` via `app.include_router(domain.router.router)`.
+1. **Email verification**: Column and `is_verified` flag exist; no verification flow is implemented.
+2. **AuditLog**: Table is migrated and the model relationship is wired, but no code writes audit records yet.
+3. **Expired refresh token cleanup**: No background job prunes `is_revoked=True` or expired rows from `refresh_tokens`.
+4. **`RoleRead.permissions`**: The list_roles endpoint returns roles without loading permissions; the `permissions` array is always empty.
+5. **Organization PATCH schema**: Uses `OrganizationCreate` (all required fields) rather than a partial-update schema.
+6. **`ScenarioResponse.interaction_count`**: The `get_scenario` endpoint returns `interaction_count=0` always; the batch count is only computed in `list_scenarios`.
+7. **Progress tracking requires authenticated submissions**: Anonymous scenario attempts (no Bearer token) are not attributed to users and do not appear in progress analytics.

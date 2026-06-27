@@ -70,7 +70,7 @@ async def get_optional_user(
         if not subject or claims.get("type") != "access":
             return None
         user_id = uuid.UUID(subject)
-    except (ValueError, Exception):
+    except Exception:
         return None
 
     user = await db.get(User, user_id)

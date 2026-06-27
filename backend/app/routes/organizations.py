@@ -61,7 +61,7 @@ async def _get_membership(
 
 async def _require_membership(
     user: User, org: Organization, db: AsyncSession
-) -> OrganizationMembership:
+) -> OrganizationMembership | None:
     m = await _get_membership(user, org, db)
     if m is None and not user.is_superuser:
         raise HTTPException(

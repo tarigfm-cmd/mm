@@ -1,11 +1,9 @@
 """Progress tracking endpoints — per-user learning analytics."""
-import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import and_, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user
