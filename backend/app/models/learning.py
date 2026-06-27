@@ -1,55 +1,24 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import (
-    BigInteger,
-    DateTime,
-    Float,
-    ForeignKey,
-    JSON,
-    String,
-    Text,
-    Uuid,
-    func,
-)
+from sqlalchemy import DateTime, Float, ForeignKey, JSON, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
 
-class Material(Base):
-    __tablename__ = "materials"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True, native_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
-    file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    file_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    content_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
-
-    scenarios: Mapped[list["Scenario"]] = relationship(
-        "Scenario", back_populates="material", cascade="all, delete-orphan"
-    )
-
-
 class Scenario(Base):
+    """A clinical case or learning scenario generated from educational material."""
+
     __tablename__ = "scenarios"
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True, native_uuid=True), primary_key=True, default=uuid.uuid4
     )
     material_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid(as_uuid=True, native_uuid=True), ForeignKey("materials.id", ondelete="SET NULL"), nullable=True
+        Uuid(as_uuid=True, native_uuid=True),
+        ForeignKey("materials.id", ondelete="SET NULL"),
+        nullable=True,
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     clinical_case: Mapped[str] = mapped_column(Text, nullable=False)
@@ -66,22 +35,30 @@ class Scenario(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    material: Mapped["Material | None"] = relationship("Material", back_populates="scenarios")
+    material: Mapped["Material | None"] = relationship(  # noqa: F821
+        "Material", back_populates="scenarios"
+    )
     interactions: Mapped[list["Interaction"]] = relationship(
         "Interaction", back_populates="scenario", cascade="all, delete-orphan"
     )
 
 
 class Interaction(Base):
+    """A student's attempt at a scenario, including AI-generated feedback."""
+
     __tablename__ = "interactions"
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True, native_uuid=True), primary_key=True, default=uuid.uuid4
     )
     scenario_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True, native_uuid=True), ForeignKey("scenarios.id", ondelete="CASCADE"), nullable=False
+        Uuid(as_uuid=True, native_uuid=True),
+        ForeignKey("scenarios.id", ondelete="CASCADE"),
+        nullable=False,
     )
-    session_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    session_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )
     user_answer: Mapped[str] = mapped_column(Text, nullable=False)
     ai_feedback: Mapped[str] = mapped_column(Text, nullable=False)
     score: Mapped[float | None] = mapped_column(Float, nullable=True)

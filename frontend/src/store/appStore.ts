@@ -2,33 +2,42 @@ import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import type { Material, Scenario, Interaction } from '@/types'
 
-interface ScenarioState {
-  // Materials
+/**
+ * Platform-wide Zustand store.
+ *
+ * Phase 1 holds content (materials) and learning (scenarios/interactions).
+ * Future slices — users, assessments, analytics, OSCE, games — will be
+ * added here or in dedicated sibling stores as the platform grows.
+ */
+interface AppState {
+  // Content
   materials: Material[]
   materialsTotal: number
   materialsLoading: boolean
 
-  // Scenarios
+  // Learning — scenario list
   scenarios: Scenario[]
   scenariosTotal: number
   scenariosLoading: boolean
 
-  // Current scenario session
+  // Learning — active session
   currentScenario: Scenario | null
   currentInteractions: Interaction[]
   interactionsLoading: boolean
   answerSubmitting: boolean
 
-  // Actions
+  // Actions — content
   setMaterials: (items: Material[], total: number) => void
   setMaterialsLoading: (v: boolean) => void
   addMaterial: (m: Material) => void
   removeMaterial: (id: string) => void
 
+  // Actions — scenarios
   setScenarios: (items: Scenario[], total: number) => void
   setScenariosLoading: (v: boolean) => void
   addScenario: (s: Scenario) => void
 
+  // Actions — active session
   setCurrentScenario: (s: Scenario | null) => void
   setCurrentInteractions: (items: Interaction[]) => void
   appendInteraction: (i: Interaction) => void
@@ -36,7 +45,7 @@ interface ScenarioState {
   setAnswerSubmitting: (v: boolean) => void
 }
 
-export const useScenarioStore = create<ScenarioState>()(
+export const useAppStore = create<AppState>()(
   devtools(
     (set) => ({
       materials: [],
@@ -73,6 +82,9 @@ export const useScenarioStore = create<ScenarioState>()(
       setInteractionsLoading: (v) => set({ interactionsLoading: v }),
       setAnswerSubmitting: (v) => set({ answerSubmitting: v }),
     }),
-    { name: 'pharmacy-ai' },
+    { name: 'pharmlearn-ai' },
   ),
 )
+
+/** @deprecated Use useAppStore */
+export const useScenarioStore = useAppStore

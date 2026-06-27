@@ -2,194 +2,163 @@
 
 ## Prerequisites
 
-- Python 3.9+
-- Node.js 16+
-- Docker & Docker Compose (optional but recommended)
-- OpenAI API Key
+| Tool | Version |
+|------|---------|
+| Python | 3.11+ |
+| Node.js | 20+ |
+| Docker + Docker Compose | any recent |
+| Anthropic API key | from console.anthropic.com |
 
-## Quick Start with Docker
+## Environment Setup
 
 ```bash
-# 1. Clone and setup
-git clone <repo>
-cd mm
 cp .env.example .env
-
-# 2. Add your OpenAI API key to .env
-OPENAI_API_KEY=sk-...
-
-# 3. Start all services
-docker-compose up
-
-# 4. Access
-- Frontend: http://localhost:5173
-- Backend: http://localhost:8000
-- API Docs: http://localhost:8000/docs
 ```
 
-## Local Development (without Docker)
+Key variables to set in `.env`:
 
-### Backend Setup
+```env
+# Required for AI features
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Keep defaults for local Docker dev
+DB_PASSWORD=postgres
+SECRET_KEY=change-me-in-production-min-50-chars-000000000000
+```
+
+## Option A — Docker Compose (recommended)
+
+```bash
+docker-compose up
+```
+
+Services started:
+- **PostgreSQL 15** on port 5432
+- **Redis 7** on port 6379
+- **Backend** (hot-reload) on port 8000
+- **Frontend** (Vite dev) on port 5173
+
+Access:
+- App: http://localhost:5173
+- API: http://localhost:8000
+- Docs: http://localhost:8000/docs
+
+## Option B — Local (no Docker)
+
+### Backend
+
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+
+# You need a running PostgreSQL and Redis, then:
+cp ../.env.example .env
+# Edit .env with your local DB/Redis URLs
+
+uvicorn app.main:app --reload
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+For local dev without Docker, the Vite proxy falls back to `http://localhost:8000`
+(configurable via `BACKEND_URL` env var if your backend runs elsewhere).
+
+## Running Tests
+
+### Backend
 
 ```bash
 cd backend
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+# All tests with coverage
+pytest tests/ -v --cov=app
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Create .env in backend directory
-cp ../.env.example .env
-
-# Run migrations (when ready)
-# alembic upgrade head
-
-# Start server
-uvicorn app.main:app --reload
+# Fast (no coverage)
+pytest tests/ -v
 ```
 
-### Frontend Setup
+Tests use an in-memory SQLite database — no PostgreSQL or Redis required.
+
+### Frontend TypeScript check
 
 ```bash
 cd frontend
-
-# Install dependencies
-npm install
-
-# Start development server
-npm run dev
+npx tsc --noEmit
 ```
 
 ## Project Structure
 
-### Backend Architecture
-
 ```
-app/
-├── main.py              # FastAPI app entry
-├── config.py            # Configuration
-├── models/              # Pydantic models & DB schemas
-│   ├── scenario.py
-│   ├── material.py
-│   └── user.py
-├── routes/              # API endpoints
-│   ├── materials.py
-│   ├── scenarios.py
-│   └── health.py
-├── services/            # Business logic
-│   ├── ai_generator.py
-│   ├── material_processor.py
-│   └── evaluator.py
-└── utils/               # Utilities
-    ├── document_parser.py
-    └── validators.py
-```
-
-### Frontend Architecture
-
-```
-src/
-├── components/          # Reusable UI components
-│   ├── Navigation.tsx
-│   ├── ScenarioCard.tsx
-│   └── MessageBubble.tsx
-├── pages/               # Page components
-│   ├── Dashboard.tsx
-│   ├── MaterialsUpload.tsx
-│   └── ScenarioPage.tsx
-├── services/            # API calls
-│   └── api.ts
-├── store/               # State management (Zustand)
-│   └── scenarioStore.ts
-├── types/               # TypeScript types
-│   └── index.ts
-├── App.tsx              # Root component
-├── main.tsx             # Entry point
-└── index.css            # Tailwind styles
+mm/
+├── backend/
+│   ├── app/
+│   │   ├── core/           # Security stubs (JWT/RBAC Phase 2)
+│   │   ├── domains/        # Future bounded-context packages
+│   │   ├── models/
+│   │   │   ├── content.py  # Material ORM model
+│   │   │   └── learning.py # Scenario, Interaction ORM models
+│   │   ├── routes/         # FastAPI routers
+│   │   ├── schemas/
+│   │   │   ├── platform.py # HealthResponse, PaginatedResponse
+│   │   │   ├── content.py  # Material schemas
+│   │   │   └── learning.py # Scenario & Interaction schemas
+│   │   ├── services/
+│   │   │   ├── ai_service.py       # Anthropic Claude integration
+│   │   │   └── document_parser.py  # Text extraction
+│   │   └── utils/validators.py
+│   ├── alembic/            # Database migrations
+│   ├── tests/
+│   │   ├── conftest.py     # SQLite async test fixtures
+│   │   ├── test_health.py
+│   │   └── test_materials.py
+│   └── requirements.txt
+└── frontend/
+    └── src/
+        ├── store/appStore.ts   # Zustand platform store
+        ├── services/api.ts     # Typed API client
+        └── types/index.ts      # TypeScript interfaces
 ```
 
-## API Endpoints
+## Key Design Decisions
 
-### Materials
-- `POST /api/materials/upload` - Upload clinical materials
-- `GET /api/materials/list` - List uploaded materials
+**UUIDs everywhere** — All primary keys use `sqlalchemy.Uuid` (not `postgresql.UUID`) for cross-database compatibility between SQLite (tests) and PostgreSQL (production).
 
-### Scenarios
-- `POST /api/scenarios/generate` - Generate scenarios from materials
-- `GET /api/scenarios` - List all scenarios
-- `GET /api/scenarios/{id}` - Get specific scenario
-- `POST /api/scenarios/{id}/answer` - Submit answer with AI feedback
+**Background text extraction** — File upload returns immediately; text extraction runs as a FastAPI `BackgroundTask`. The frontend polls `GET /api/materials/{id}` until `has_content: true`.
 
-## Environment Variables
+**Anonymous sessions** — No auth in Phase 1. Browser generates a UUID stored in `localStorage` and sends it as `X-Session-Id` header so interactions can be associated across requests.
 
-```
-# API
-DEBUG=True
-OPENAI_API_KEY=your_key_here
-OPENAI_MODEL=gpt-4-turbo-preview
+**AI service** — `app/services/ai_service.py` handles both scenario generation and answer evaluation via the Anthropic Python SDK. The AI model is configured via `AI_MODEL` env var (default: `claude-sonnet-4-6`).
 
-# Database
-DATABASE_URL=postgresql://user:password@localhost:5432/clinical_ai
+## Database Migrations
 
-# Features
-ENABLE_S3=False
-UPLOAD_DIR=./uploads
-```
+Migrations use Alembic with psycopg2 (sync) while the app uses asyncpg.
 
-## Testing
-
-### Backend Tests
 ```bash
+# Run migrations against running PostgreSQL
 cd backend
-pytest tests/
-pytest tests/ -v --cov=app
+alembic upgrade head
+
+# Create new migration
+alembic revision --autogenerate -m "description"
 ```
 
-### Frontend Tests
-```bash
-cd frontend
-npm test
-```
+In development the app auto-creates tables via `Base.metadata.create_all` on startup (lifespan event). Use Alembic for production.
 
-## Next Steps: AI Integration
+## Adding a New Domain Module
 
-1. **Document Processing**
-   - Extract text from PDFs/images using PyPDF2 or pytesseract
-   - Store in vector database (Pinecone, Weaviate)
+1. Add a package under `backend/app/domains/<name>/`
+2. Create `models.py`, `schemas.py`, `router.py`, `service.py`
+3. Register the router in `backend/app/main.py`
+4. Create an Alembic migration for new tables
+5. Add TypeScript types in `frontend/src/types/index.ts`
+6. Add API methods in `frontend/src/services/api.ts`
 
-2. **Scenario Generation**
-   - Use LangChain + OpenAI for context-aware generation
-   - Implement prompt engineering for medical accuracy
-
-3. **Interactive Learning**
-   - WebSocket support for real-time feedback
-   - Store conversation history
-   - Analytics dashboard
-
-## Troubleshooting
-
-### Backend connection issues
-```bash
-# Check if backend is running
-curl http://localhost:8000/api/health
-
-# Check logs
-docker logs clinical_ai_backend
-```
-
-### Database issues
-```bash
-# Reset database
-docker-compose down -v
-docker-compose up db
-```
-
-## Resources
-
-- [FastAPI Docs](https://fastapi.tiangolo.com/)
-- [React Docs](https://react.dev/)
-- [OpenAI API](https://platform.openai.com/docs)
-- [LangChain Docs](https://docs.langchain.com/)
+See [ARCHITECTURE.md](ARCHITECTURE.md) for module boundary conventions.

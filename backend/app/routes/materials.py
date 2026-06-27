@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.database import get_db
 from app.models import Material, Scenario
-from app.schemas.schemas import MaterialListItem, MaterialListResponse, MaterialResponse
+from app.schemas import MaterialListItem, MaterialListResponse, MaterialResponse
 from app.services.document_parser import extract_text
 from app.utils.validators import FileValidationError, build_upload_path, validate_upload_file
 

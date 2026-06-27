@@ -9,7 +9,7 @@ import {
 } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
 import { materialsApi, scenariosApi } from '@/services/api'
-import { useScenarioStore } from '@/store/scenarioStore'
+import { useScenarioStore } from '@/store/appStore'
 import UploadDropzone from '@/components/UploadDropzone'
 import LoadingSpinner from '@/components/LoadingSpinner'
 import type { Material, DifficultyLevel, UploadProgress } from '@/types'

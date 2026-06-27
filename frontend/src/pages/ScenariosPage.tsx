@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BeakerIcon, FunnelIcon } from '@heroicons/react/24/outline'
 import { scenariosApi } from '@/services/api'
-import { useScenarioStore } from '@/store/scenarioStore'
+import { useScenarioStore } from '@/store/appStore'
 import ScenarioCard from '@/components/ScenarioCard'
 import LoadingSpinner from '@/components/LoadingSpinner'
 

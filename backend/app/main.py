@@ -45,8 +45,10 @@ app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
     description=(
-        "Enterprise-grade AI platform for community pharmacy education and clinical training. "
-        "Upload study materials, generate realistic patient scenarios, and receive instant AI feedback."
+        "PharmLearn AI — Community Pharmacy Training Platform. "
+        "A world-class SaaS platform supporting clinical cases, OTC triage, prescription screening, "
+        "drug interaction detection, OSCE stations, adaptive assessments, pharmacy games, "
+        "and AI-powered tutoring for community pharmacy education."
     ),
     docs_url="/docs",
     redoc_url="/redoc",

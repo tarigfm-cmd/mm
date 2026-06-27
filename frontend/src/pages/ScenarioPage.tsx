@@ -7,7 +7,7 @@ import {
   BookOpenIcon,
 } from '@heroicons/react/24/outline'
 import { scenariosApi, getOrCreateSessionId } from '@/services/api'
-import { useScenarioStore } from '@/store/scenarioStore'
+import { useScenarioStore } from '@/store/appStore'
 import MessageBubble from '@/components/MessageBubble'
 import DifficultyBadge from '@/components/DifficultyBadge'
 import LoadingSpinner from '@/components/LoadingSpinner'

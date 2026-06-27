@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.models import Interaction, Material, Scenario
-from app.schemas.schemas import (
+from app.schemas import (
     InteractionCreate,
     InteractionResponse,
     ScenarioGenerateRequest,
@@ -18,7 +18,7 @@ from app.schemas.schemas import (
     ScenarioListResponse,
     ScenarioResponse,
 )
-from app.services.ai_generator import evaluate_answer, generate_scenario
+from app.services.ai_service import evaluate_answer, generate_scenario
 
 router = APIRouter(prefix="/api/scenarios", tags=["scenarios"])
 
