@@ -261,6 +261,23 @@ Goal: Harden PayPal integration for real sandbox credential testing. Correct pla
 - [x] TypeScript check: zero errors
 - [x] DEVELOPMENT.md: sandbox test checklist, `external_paypal_plan_id` configuration guide, success/cancel URL docs, webhook event table updated
 
+## Admin Plan Configuration UI — PayPal Plan ID Management (Complete)
+
+Goal: Give platform superusers a UI to configure the PayPal Billing Plan ID for each subscription tier — eliminating direct DB access for this routine operational step.
+
+- [x] `SubscriptionPlanUpdate` Pydantic schema — all fields optional; validators: `price_monthly_cents >= 0`, `currency` must be uppercase 3-letter ISO 4217
+- [x] `SubscriptionPlanAdminRead` schema — extends `SubscriptionPlanRead` with `created_at` / `updated_at`; includes inactive plans
+- [x] `GET /api/billing/admin/plans` — returns all plans including inactive; superuser only
+- [x] `PATCH /api/billing/admin/plans/{plan_code}` — update name, price, currency, is_active, external_paypal_plan_id; superuser only; validation rules: free plan (price=0) cannot have PayPal ID; plan_code immutable; unknown code → 404; no plan deletion
+- [x] `SubscriptionPlanAdminRead` and `SubscriptionPlanUpdate` TypeScript interfaces added to `types/billing.ts`
+- [x] `billingApi.adminListPlans()` and `billingApi.adminUpdatePlan(planCode, data)` added to `billingApi.ts`
+- [x] `AdminBillingPlansPage` (`/admin/billing/plans`) — plan table showing code, price, status, PayPal Plan ID; Edit button opens modal; paste-and-save PayPal ID; clear to null; inline validation errors; success toast
+- [x] `/admin/billing/plans` lazy route added to `App.tsx` under `AdminRoute` (superuser guard)
+- [x] 10 new backend tests — admin list all plans (including inactive), list requires superuser, update sets ID, update clears ID, non-admin blocked (403), free plan rejected (422), invalid currency rejected (422), negative price rejected (422), unknown plan 404, checkout uses updated ID
+- [x] Full suite: **362/362** backend tests passing
+- [x] TypeScript check: zero errors
+- [x] DEVELOPMENT.md: admin plan config route table updated, PayPal Plan ID pasting guide updated (UI → API → SQL)
+
 ## Phase 2 — Users & Auth (continued)
 
 Goal: Full user-facing auth and profile features.

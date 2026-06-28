@@ -19,7 +19,9 @@ from app.schemas.billing import (
     PayPalCheckoutResponse,
     PayPalWebhookResponse,
     SubscriptionAssignRequest,
+    SubscriptionPlanAdminRead,
     SubscriptionPlanRead,
+    SubscriptionPlanUpdate,
     UsageSummary,
     UserSubscriptionRead,
     UserSubscriptionWithFallback,
@@ -105,6 +107,66 @@ async def get_my_usage(
         )
 
     return MonthlyUsageResponse(usage=usage_list, period_start=period_start)
+
+
+@router.get("/admin/plans", response_model=list[SubscriptionPlanAdminRead])
+async def admin_list_plans(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_superuser),
+) -> list[SubscriptionPlanAdminRead]:
+    """Return all subscription plans including inactive ones. Superuser only."""
+    rows = (
+        await db.execute(
+            select(SubscriptionPlan).order_by(SubscriptionPlan.price_monthly_cents)
+        )
+    ).scalars().all()
+    return [SubscriptionPlanAdminRead.model_validate(r) for r in rows]
+
+
+@router.patch("/admin/plans/{plan_code}", response_model=SubscriptionPlanAdminRead)
+async def admin_update_plan(
+    plan_code: str,
+    body: SubscriptionPlanUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_superuser),
+) -> SubscriptionPlanAdminRead:
+    """Update plan fields including external_paypal_plan_id. Superuser only."""
+    plan_row = (
+        await db.execute(
+            select(SubscriptionPlan).where(SubscriptionPlan.code == plan_code).limit(1)
+        )
+    ).scalar_one_or_none()
+    if plan_row is None:
+        raise HTTPException(status_code=404, detail=f"Plan '{plan_code}' not found.")
+
+    if body.external_paypal_plan_id is not None and plan_row.price_monthly_cents == 0:
+        raise HTTPException(
+            status_code=422,
+            detail="Free plans (price = 0) cannot have a PayPal Plan ID.",
+        )
+    # Also catch if price is being set to 0 while paypal id already exists or is being set
+    new_price = body.price_monthly_cents if body.price_monthly_cents is not None else plan_row.price_monthly_cents
+    new_paypal_id = body.external_paypal_plan_id if body.external_paypal_plan_id is not None else plan_row.external_paypal_plan_id
+    if new_price == 0 and new_paypal_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Free plans (price = 0) cannot have a PayPal Plan ID.",
+        )
+
+    if body.name is not None:
+        plan_row.name = body.name
+    if body.price_monthly_cents is not None:
+        plan_row.price_monthly_cents = body.price_monthly_cents
+    if body.currency is not None:
+        plan_row.currency = body.currency
+    if body.is_active is not None:
+        plan_row.is_active = body.is_active
+    if "external_paypal_plan_id" in body.model_fields_set:
+        plan_row.external_paypal_plan_id = body.external_paypal_plan_id
+
+    await db.commit()
+    await db.refresh(plan_row)
+    return SubscriptionPlanAdminRead.model_validate(plan_row)
 
 
 @router.post("/admin/users/{user_id}/subscription", response_model=UserSubscriptionRead)

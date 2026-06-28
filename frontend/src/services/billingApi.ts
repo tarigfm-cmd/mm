@@ -8,7 +8,9 @@ import { getRefreshToken, setStoredRefreshToken } from '@/services/api'
 import type {
   MonthlyUsageResponse,
   PayPalCheckoutResponse,
+  SubscriptionPlanAdminRead,
   SubscriptionPlanRead,
+  SubscriptionPlanUpdate,
   UserSubscriptionRead,
   UserSubscriptionWithFallback,
 } from '@/types/billing'
@@ -108,6 +110,24 @@ export const billingApi = {
     const { data } = await billingHttp.post<PayPalCheckoutResponse>(
       '/api/billing/checkout/paypal',
       { plan_code: planCode },
+    )
+    return data
+  },
+
+  adminListPlans: async (): Promise<SubscriptionPlanAdminRead[]> => {
+    const { data } = await billingHttp.get<SubscriptionPlanAdminRead[]>(
+      '/api/billing/admin/plans',
+    )
+    return data
+  },
+
+  adminUpdatePlan: async (
+    planCode: string,
+    updates: SubscriptionPlanUpdate,
+  ): Promise<SubscriptionPlanAdminRead> => {
+    const { data } = await billingHttp.patch<SubscriptionPlanAdminRead>(
+      `/api/billing/admin/plans/${planCode}`,
+      updates,
     )
     return data
   },

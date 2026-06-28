@@ -859,3 +859,238 @@ async def test_plans_api_exposes_paypal_plan_id(
     plans = {p["code"]: p for p in r.json()}
     assert plans["pro"]["external_paypal_plan_id"] == "P-PRO-FAKE-001"
     assert plans["free"]["external_paypal_plan_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# Admin plan management helpers
+# ---------------------------------------------------------------------------
+
+ADMIN_PP_USER = {
+    "email": "pp_admin@example.com",
+    "username": "ppadmin",
+    "password": "AdminPass1!",
+    "full_name": "PP Admin",
+}
+
+
+async def _create_pp_admin_token(client: AsyncClient, engine) -> str:
+    """Register a superuser and return access_token."""
+    r = await client.post("/api/auth/register", json=ADMIN_PP_USER)
+    assert r.status_code == 201, r.text
+    user_id = uuid.UUID(r.json()["id"])
+
+    async with AsyncSession(engine, expire_on_commit=False) as s:
+        user = await s.get(User, user_id)
+        user.is_superuser = True
+        await s.commit()
+
+    login = await client.post(
+        "/api/auth/login",
+        json={"email": ADMIN_PP_USER["email"], "password": ADMIN_PP_USER["password"]},
+    )
+    return login.json()["access_token"]
+
+
+# ---------------------------------------------------------------------------
+# GET /api/billing/admin/plans — list all plans including inactive
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_admin_list_plans_returns_all_including_inactive(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        plans = await _seed_plans(s, with_paypal_plan_id=True)
+        # Make institution inactive
+        plans["institution"].is_active = False
+        await s.commit()
+
+    token = await _create_pp_admin_token(client, fresh_engine)
+    r = await client.get(
+        "/api/billing/admin/plans",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert r.status_code == 200
+    data = {p["code"]: p for p in r.json()}
+    assert "free" in data
+    assert "pro" in data
+    assert "institution" in data
+    assert data["institution"]["is_active"] is False
+    assert data["pro"]["external_paypal_plan_id"] == "P-PRO-FAKE-001"
+
+
+@pytest.mark.asyncio
+async def test_admin_list_plans_requires_superuser(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s)
+
+    token = await _register_login(client, VALID_USER)
+    r = await client.get(
+        "/api/billing/admin/plans",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# PATCH /api/billing/admin/plans/{plan_code} — update external_paypal_plan_id
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_admin_update_plan_sets_paypal_plan_id(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s, with_paypal_plan_id=False)
+
+    token = await _create_pp_admin_token(client, fresh_engine)
+    r = await client.patch(
+        "/api/billing/admin/plans/pro",
+        json={"external_paypal_plan_id": "P-NEW-123"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert r.status_code == 200
+    assert r.json()["external_paypal_plan_id"] == "P-NEW-123"
+
+    # Verify persisted
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        row = (await s.execute(select(SubscriptionPlan).where(SubscriptionPlan.code == "pro"))).scalar_one()
+    assert row.external_paypal_plan_id == "P-NEW-123"
+
+
+@pytest.mark.asyncio
+async def test_admin_update_plan_clears_paypal_plan_id(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s, with_paypal_plan_id=True)
+
+    token = await _create_pp_admin_token(client, fresh_engine)
+    r = await client.patch(
+        "/api/billing/admin/plans/pro",
+        json={"external_paypal_plan_id": None},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert r.status_code == 200
+    assert r.json()["external_paypal_plan_id"] is None
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        row = (await s.execute(select(SubscriptionPlan).where(SubscriptionPlan.code == "pro"))).scalar_one()
+    assert row.external_paypal_plan_id is None
+
+
+@pytest.mark.asyncio
+async def test_admin_update_plan_non_admin_returns_403(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s)
+
+    token = await _register_login(client, VALID_USER)
+    r = await client.patch(
+        "/api/billing/admin/plans/pro",
+        json={"external_paypal_plan_id": "P-HACKER-001"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_update_plan_free_plan_rejects_paypal_id(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s)
+
+    token = await _create_pp_admin_token(client, fresh_engine)
+    r = await client.patch(
+        "/api/billing/admin/plans/free",
+        json={"external_paypal_plan_id": "P-FREE-INVALID"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 422
+    assert "free" in r.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_update_plan_invalid_currency_rejected(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s)
+
+    token = await _create_pp_admin_token(client, fresh_engine)
+    r = await client.patch(
+        "/api/billing/admin/plans/pro",
+        json={"currency": "usd"},  # must be uppercase
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_admin_update_plan_negative_price_rejected(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s)
+
+    token = await _create_pp_admin_token(client, fresh_engine)
+    r = await client.patch(
+        "/api/billing/admin/plans/pro",
+        json={"price_monthly_cents": -100},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_admin_update_plan_unknown_code_returns_404(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s)
+
+    token = await _create_pp_admin_token(client, fresh_engine)
+    r = await client.patch(
+        "/api/billing/admin/plans/nonexistent",
+        json={"external_paypal_plan_id": "P-GHOST"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_checkout_uses_updated_paypal_plan_id(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """After admin updates the PayPal Plan ID, checkout must use the new ID."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s, with_paypal_plan_id=True)
+
+    admin_token = await _create_pp_admin_token(client, fresh_engine)
+    r = await client.patch(
+        "/api/billing/admin/plans/pro",
+        json={"external_paypal_plan_id": "P-UPDATED-999"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert r.status_code == 200
+
+    user_token = await _register_login(client, VALID_USER)
+    provider = _mock_provider(configured=True)
+
+    with patch("app.routes.billing.get_paypal_provider", return_value=provider):
+        r = await client.post(
+            "/api/billing/checkout/paypal",
+            json={"plan_code": "pro"},
+            headers={"Authorization": f"Bearer {user_token}"},
+        )
+
+    assert r.status_code == 200
+    call_kwargs = provider.create_subscription.call_args.kwargs
+    assert call_kwargs["paypal_plan_id"] == "P-UPDATED-999"

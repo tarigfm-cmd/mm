@@ -17,6 +17,19 @@ export interface SubscriptionPlanRead {
   external_paypal_plan_id: string | null
 }
 
+export interface SubscriptionPlanAdminRead extends SubscriptionPlanRead {
+  created_at: string
+  updated_at: string
+}
+
+export interface SubscriptionPlanUpdate {
+  name?: string
+  price_monthly_cents?: number
+  currency?: string
+  is_active?: boolean
+  external_paypal_plan_id?: string | null
+}
+
 export interface UserSubscriptionRead {
   id: string
   user_id: string

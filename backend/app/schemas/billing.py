@@ -1,9 +1,10 @@
 """Pydantic schemas for subscription billing endpoints."""
+import re
 import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SubscriptionPlanRead(BaseModel):
@@ -25,6 +26,37 @@ class SubscriptionPlanRead(BaseModel):
     external_paypal_plan_id: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+
+class SubscriptionPlanAdminRead(SubscriptionPlanRead):
+    """Extended plan schema for admin endpoints — includes inactive plans."""
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class SubscriptionPlanUpdate(BaseModel):
+    """Request body for PATCH /admin/plans/{plan_code}. All fields optional."""
+    name: Optional[str] = None
+    price_monthly_cents: Optional[int] = None
+    currency: Optional[str] = None
+    is_active: Optional[bool] = None
+    external_paypal_plan_id: Optional[str] = Field(None, max_length=100)
+
+    @field_validator("price_monthly_cents")
+    @classmethod
+    def price_non_negative(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 0:
+            raise ValueError("price_monthly_cents must be >= 0")
+        return v
+
+    @field_validator("currency")
+    @classmethod
+    def currency_uppercase_3(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not re.fullmatch(r"[A-Z]{3}", v):
+            raise ValueError("currency must be an uppercase 3-letter ISO 4217 code (e.g. USD)")
+        return v
 
 
 class UserSubscriptionRead(BaseModel):

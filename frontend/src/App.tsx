@@ -25,6 +25,9 @@ const TrainingLibraryPage = lazy(() => import('@/pages/learn/TrainingLibraryPage
 const TrainingDetailPage = lazy(() => import('@/pages/learn/TrainingDetailPage'))
 const TrainingProgressPage = lazy(() => import('@/pages/learn/TrainingProgressPage'))
 
+// Admin billing
+const AdminBillingPlansPage = lazy(() => import('@/pages/admin/AdminBillingPlansPage'))
+
 // Governance admin pages
 const GovernanceLayout = lazy(() => import('@/components/governance/GovernanceLayout'))
 const GovernanceDashboard = lazy(() => import('@/pages/governance/GovernanceDashboard'))
@@ -71,8 +74,9 @@ function AppRoutes() {
         <Route path="/billing/success" element={<PayPalSuccessPage />} />
         <Route path="/billing/cancel" element={<PayPalCancelPage />} />
 
-        {/* Admin-only governance routes */}
+        {/* Admin-only routes */}
         <Route element={<AdminRoute />}>
+          <Route path="/admin/billing/plans" element={<AdminBillingPlansPage />} />
           <Route path="/admin/governance" element={<GovernanceLayout />}>
             <Route index element={<GovernanceDashboard />} />
             <Route path="import" element={<ImportCenter />} />

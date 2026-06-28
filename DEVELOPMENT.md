@@ -442,6 +442,8 @@ Only a platform admin (`is_superuser=True`) can assign a plan to a user.
 | `GET` | `/api/billing/me/subscription` | Any authenticated user |
 | `GET` | `/api/billing/me/usage` | Any authenticated user |
 | `POST` | `/api/billing/admin/users/{user_id}/subscription` | Superuser only |
+| `GET` | `/api/billing/admin/plans` | Superuser only |
+| `PATCH` | `/api/billing/admin/plans/{plan_code}` | Superuser only |
 
 ### Training session entitlement
 
@@ -457,6 +459,7 @@ Only a platform admin (`is_superuser=True`) can assign a plan to a user.
 | URL | Page |
 |-----|------|
 | `/billing` | BillingPage — current plan, session usage bar, all 4 plan cards, upgrade CTA |
+| `/admin/billing/plans` | AdminBillingPlansPage — plan table with PayPal Plan ID editor (superuser only) |
 
 The **Billing** link appears in `Navigation` for all authenticated users.
 
@@ -513,7 +516,22 @@ or Catalog API.
 "PayPal checkout is not configured for this plan yet." The plan button on the billing page
 also shows "Checkout not configured for this plan yet." in place of the PayPal button.
 
-To set the PayPal plan ID for a plan (requires direct DB access or an admin endpoint):
+To set the PayPal plan ID for a plan, use the admin UI or API:
+
+**Admin UI (recommended):**
+1. Sign in as a superuser
+2. Navigate to `/admin/billing/plans`
+3. Click **Edit** next to the plan, paste the `P-XXXXXXXXXXXXXXXXXX` ID, click **Save**
+
+**API (superuser JWT required):**
+```bash
+curl -X PATCH http://localhost:8000/api/billing/admin/plans/pro \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"external_paypal_plan_id": "P-XXXXXXXXXXXXXXXXXX"}'
+```
+
+**Direct DB (if API is unavailable):**
 ```sql
 UPDATE subscription_plans SET external_paypal_plan_id = 'P-XXXXXXXXXXXXXXXXXX'
 WHERE code = 'pro';
@@ -606,7 +624,7 @@ cd backend
 pytest tests/test_paypal.py -v
 ```
 
-32 tests — no real PayPal credentials required. All HTTP calls are mocked.
+42 tests — no real PayPal credentials required. All HTTP calls are mocked.
 
 ### Payment integrations excluded
 
