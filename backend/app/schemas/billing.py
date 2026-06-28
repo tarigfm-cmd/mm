@@ -126,3 +126,28 @@ class PaymentWebhookEventRead(BaseModel):
     processed_at: Optional[datetime]
 
     model_config = {"from_attributes": True}
+
+
+class PayPalPlanStatus(BaseModel):
+    plan_code: str
+    name: str
+    is_active: bool
+    is_paid: bool
+    external_paypal_plan_id_configured: bool
+    checkout_ready: bool
+
+
+class PayPalConfigStatus(BaseModel):
+    """Safe PayPal configuration status — never contains secret values."""
+    paypal_env: str
+    app_public_url: str
+    client_id_configured: bool
+    client_secret_configured: bool
+    webhook_id_configured: bool
+    paypal_configured: bool
+    webhook_url: str
+    success_url: str
+    cancel_url: str
+    plans: list[PayPalPlanStatus]
+    missing_requirements: list[str]
+    warnings: list[str]

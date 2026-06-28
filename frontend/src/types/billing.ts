@@ -68,3 +68,27 @@ export interface PayPalCheckoutResponse {
   status: string
   provider: string
 }
+
+export interface PayPalPlanStatus {
+  plan_code: string
+  name: string
+  is_active: boolean
+  is_paid: boolean
+  external_paypal_plan_id_configured: boolean
+  checkout_ready: boolean
+}
+
+export interface PayPalConfigStatus {
+  paypal_env: string
+  app_public_url: string
+  client_id_configured: boolean
+  client_secret_configured: boolean
+  webhook_id_configured: boolean
+  paypal_configured: boolean
+  webhook_url: string
+  success_url: string
+  cancel_url: string
+  plans: PayPalPlanStatus[]
+  missing_requirements: string[]
+  warnings: string[]
+}

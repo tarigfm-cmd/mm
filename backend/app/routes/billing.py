@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.core.dependencies import get_current_user, require_superuser
 from app.database import get_db
 from app.models.billing import PaymentWebhookEvent, SubscriptionPlan, UserSubscription
@@ -17,6 +18,7 @@ from app.schemas.billing import (
     MonthlyUsageResponse,
     PayPalCheckoutRequest,
     PayPalCheckoutResponse,
+    PayPalConfigStatus,
     PayPalWebhookResponse,
     SubscriptionAssignRequest,
     SubscriptionPlanAdminRead,
@@ -26,6 +28,7 @@ from app.schemas.billing import (
     UserSubscriptionRead,
     UserSubscriptionWithFallback,
 )
+from app.services.billing_status import build_paypal_config_status
 from app.services.entitlements import (
     count_monthly_usage,
     get_effective_plan,
@@ -121,6 +124,23 @@ async def admin_list_plans(
         )
     ).scalars().all()
     return [SubscriptionPlanAdminRead.model_validate(r) for r in rows]
+
+
+@router.get("/admin/paypal/status", response_model=PayPalConfigStatus)
+async def admin_paypal_status(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_superuser),
+) -> PayPalConfigStatus:
+    """Return safe PayPal configuration readiness status. Never returns secret values. Superuser only."""
+    settings = get_settings()
+
+    rows = (
+        await db.execute(
+            select(SubscriptionPlan).order_by(SubscriptionPlan.price_monthly_cents)
+        )
+    ).scalars().all()
+
+    return build_paypal_config_status(settings, list(rows))
 
 
 @router.patch("/admin/plans/{plan_code}", response_model=SubscriptionPlanAdminRead)
@@ -251,7 +271,6 @@ async def paypal_checkout(
             detail=f"PayPal checkout is not configured for the '{body.plan_code}' plan yet. Contact admin.",
         )
 
-    from app.config import get_settings
     settings = get_settings()
     return_url = f"{settings.app_public_url}/billing/success"
     cancel_url = f"{settings.app_public_url}/billing/cancel"

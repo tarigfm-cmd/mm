@@ -444,6 +444,7 @@ Only a platform admin (`is_superuser=True`) can assign a plan to a user.
 | `POST` | `/api/billing/admin/users/{user_id}/subscription` | Superuser only |
 | `GET` | `/api/billing/admin/plans` | Superuser only |
 | `PATCH` | `/api/billing/admin/plans/{plan_code}` | Superuser only |
+| `GET` | `/api/billing/admin/paypal/status` | Superuser only |
 
 ### Training session entitlement
 
@@ -459,7 +460,7 @@ Only a platform admin (`is_superuser=True`) can assign a plan to a user.
 | URL | Page |
 |-----|------|
 | `/billing` | BillingPage — current plan, session usage bar, all 4 plan cards, upgrade CTA |
-| `/admin/billing/plans` | AdminBillingPlansPage — plan table with PayPal Plan ID editor (superuser only) |
+| `/admin/billing/plans` | AdminBillingPlansPage — PayPal readiness panel + plan table with PayPal Plan ID editor and checkout status (superuser only) |
 
 The **Billing** link appears in `Navigation` for all authenticated users.
 
@@ -540,29 +541,63 @@ WHERE code = 'pro';
 The internal `plan_code` (e.g. "pro") is **never sent to PayPal** — only `external_paypal_plan_id`
 is used in the PayPal subscription creation request.
 
-### PayPal sandbox setup
+### PayPal sandbox setup sequence
 
-1. Create a sandbox app at https://developer.paypal.com/developer/applications
-2. Copy `Client ID` and `Secret` to `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET`
-3. Create billing plans in the PayPal Catalog API (see PayPal docs) — note the `P-...` plan ID
-4. Set `external_paypal_plan_id` on each paid plan in the database (see above)
-5. Set up a webhook listener via `ngrok`: `ngrok http 8000`
-6. Register `https://<ngrok-id>.ngrok.io/api/billing/webhooks/paypal` in PayPal developer portal
-7. Copy the Webhook ID to `PAYPAL_WEBHOOK_ID`
+Complete setup in this order:
+
+1. **Create a sandbox app** — PayPal Developer Dashboard → My Apps & Credentials → Create App
+2. **Copy credentials** → set `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` in `.env`
+3. **Set `PAYPAL_ENV=sandbox`** in `.env`
+4. **Set `APP_PUBLIC_URL`** to the public base URL the backend is reachable at
+   - For ngrok local dev: `APP_PUBLIC_URL=https://<ngrok-id>.ngrok.io`
+   - For production: `APP_PUBLIC_URL=https://app.pharmlearn.dev`
+5. **Start ngrok** (local dev only): `ngrok http 8000` to expose the backend
+6. **Create a PayPal subscription product and billing plan** in the Catalog API or PayPal Dashboard
+   — note the `P-XXXXXXXXXXXXXXXXXX` billing plan ID
+7. **Paste the PayPal Plan ID** into `/admin/billing/plans` (sign in as superuser → Edit → Save)
+   — or use `PATCH /api/billing/admin/plans/pro` API
+8. **Register the webhook** in PayPal Developer Dashboard:
+   - URL: `{APP_PUBLIC_URL}/api/billing/webhooks/paypal`
+   - The exact URL is shown on `/admin/billing/plans` with a copy button
+   - Subscribe to at least: `BILLING.SUBSCRIPTION.ACTIVATED`, `BILLING.SUBSCRIPTION.CANCELLED`,
+     `BILLING.SUBSCRIPTION.SUSPENDED`, `BILLING.SUBSCRIPTION.EXPIRED`,
+     `BILLING.SUBSCRIPTION.PAYMENT.FAILED`
+9. **Copy the Webhook ID** → set `PAYPAL_WEBHOOK_ID` in `.env`
+10. **Verify readiness** at `/admin/billing/plans` — all credentials should show "Configured",
+    no missing requirements, and the Pro plan should show "Ready" in the Checkout column
+11. **Run a test checkout** from `/billing` — select Pro → Pay with PayPal → approve in sandbox
+
+### Webhook source-of-truth rule
+
+The return URL (`/billing/success`) **never activates the subscription**. It only shows
+"Payment received — activation pending." The webhook `BILLING.SUBSCRIPTION.ACTIVATED` is
+the authoritative event that sets `user_subscriptions.status = 'active'`.
+
+### PayPal config health endpoint
+
+`GET /api/billing/admin/paypal/status` (superuser only) returns a safe readiness report:
+- Credential presence as booleans — **never the actual values**
+- Derived webhook/success/cancel URLs
+- Per-plan `checkout_ready` flag
+- `missing_requirements` and `warnings` lists
+
+This endpoint is a **local config check only** — it does not call the PayPal API.
 
 ### Sandbox test checklist
 
 - [ ] `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` set from sandbox app
 - [ ] `PAYPAL_ENV=sandbox`
 - [ ] `PAYPAL_WEBHOOK_ID` set from PayPal developer webhook registration
-- [ ] `external_paypal_plan_id` set on at least one plan (e.g. Pro)
-- [ ] `APP_PUBLIC_URL` points to a reachable URL (e.g. ngrok tunnel for local dev)
-- [ ] `GET /api/billing/plans` returns the plan with `external_paypal_plan_id` populated
+- [ ] `external_paypal_plan_id` set on at least one paid plan (use `/admin/billing/plans`)
+- [ ] `APP_PUBLIC_URL` points to a publicly reachable URL (e.g. ngrok tunnel to port 8000)
+- [ ] `/admin/billing/plans` shows all credentials "Configured" and no missing requirements
+- [ ] `/admin/billing/plans` shows Pro plan as "Ready" in the Checkout column
 - [ ] `POST /api/billing/checkout/paypal { plan_code: "pro" }` returns `checkout_url`
 - [ ] Browser redirect to `checkout_url` shows PayPal subscription approval page
 - [ ] After approval, PayPal redirects to `{APP_PUBLIC_URL}/billing/success`
-- [ ] PayPal sends `BILLING.SUBSCRIPTION.ACTIVATED` webhook to `POST /api/billing/webhooks/paypal`
-- [ ] `payment_webhook_events` table has a processed row; `user_subscriptions` row updated to `active`
+- [ ] `/billing/success` shows "Payment received — activation pending" (does NOT activate)
+- [ ] PayPal sends `BILLING.SUBSCRIPTION.ACTIVATED` webhook → `user_subscriptions` updated to `active`
+- [ ] `payment_webhook_events` table has a `processed` row for the activation event
 
 ### Checkout flow
 
@@ -624,7 +659,7 @@ cd backend
 pytest tests/test_paypal.py -v
 ```
 
-42 tests — no real PayPal credentials required. All HTTP calls are mocked.
+51 tests — no real PayPal credentials required. All HTTP calls are mocked.
 
 ### Payment integrations excluded
 

@@ -8,6 +8,7 @@ import { getRefreshToken, setStoredRefreshToken } from '@/services/api'
 import type {
   MonthlyUsageResponse,
   PayPalCheckoutResponse,
+  PayPalConfigStatus,
   SubscriptionPlanAdminRead,
   SubscriptionPlanRead,
   SubscriptionPlanUpdate,
@@ -128,6 +129,13 @@ export const billingApi = {
     const { data } = await billingHttp.patch<SubscriptionPlanAdminRead>(
       `/api/billing/admin/plans/${planCode}`,
       updates,
+    )
+    return data
+  },
+
+  adminGetPayPalStatus: async (): Promise<PayPalConfigStatus> => {
+    const { data } = await billingHttp.get<PayPalConfigStatus>(
+      '/api/billing/admin/paypal/status',
     )
     return data
   },

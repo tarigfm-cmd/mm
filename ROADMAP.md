@@ -278,6 +278,24 @@ Goal: Give platform superusers a UI to configure the PayPal Billing Plan ID for 
 - [x] TypeScript check: zero errors
 - [x] DEVELOPMENT.md: admin plan config route table updated, PayPal Plan ID pasting guide updated (UI → API → SQL)
 
+## PayPal Sandbox Operational Readiness — Config Health + Admin Checklist (Complete)
+
+Goal: Give platform admins visibility into PayPal configuration state without exposing secrets or requiring direct database or `.env` access.
+
+- [x] `PayPalPlanStatus` and `PayPalConfigStatus` Pydantic schemas — safe readiness report; booleans only for credentials
+- [x] `build_paypal_config_status(settings, plans)` — pure helper function in `services/billing_status.py`; fully testable without HTTP
+- [x] `GET /api/billing/admin/paypal/status` — superuser only; returns credential presence booleans, derived URLs, per-plan `checkout_ready`, `missing_requirements[]`, `warnings[]`; never returns credential values
+- [x] `get_settings` moved to module level in `routes/billing.py` (enables clean mocking in tests)
+- [x] `PayPalPlanStatus` and `PayPalConfigStatus` TypeScript interfaces added to `types/billing.ts`
+- [x] `billingApi.adminGetPayPalStatus()` added to `billingApi.ts`
+- [x] `AdminBillingPlansPage` updated — PayPal readiness panel above plan table: credentials status rows, environment label, webhook/success/cancel URLs with copy-to-clipboard buttons, missing requirements (red), warnings (amber), all-good confirmation (green)
+- [x] Plan table updated — added "Checkout" column showing per-plan `checkout_ready` badge (Ready / Not ready / N/A for free)
+- [x] After editing a plan, PayPal status is re-fetched to update checkout badges
+- [x] 9 new backend tests — status requires superuser (403), secrets not in response, missing env → `missing_requirements`, plan without PayPal ID not ready, paid plan + creds + ID = ready, URLs from `APP_PUBLIC_URL`, helper unit tests (no-creds, skip-verify warning, live-env warning)
+- [x] Full suite: **371/371** backend tests passing
+- [x] TypeScript check: zero errors
+- [x] DEVELOPMENT.md: complete numbered sandbox setup sequence (10 steps), webhook source-of-truth rule, config health endpoint docs, expanded sandbox test checklist
+
 ## Phase 2 — Users & Auth (continued)
 
 Goal: Full user-facing auth and profile features.

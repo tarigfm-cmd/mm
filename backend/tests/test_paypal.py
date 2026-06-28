@@ -1094,3 +1094,225 @@ async def test_checkout_uses_updated_paypal_plan_id(
     assert r.status_code == 200
     call_kwargs = provider.create_subscription.call_args.kwargs
     assert call_kwargs["paypal_plan_id"] == "P-UPDATED-999"
+
+
+# ---------------------------------------------------------------------------
+# GET /api/billing/admin/paypal/status — PayPal configuration health endpoint
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_paypal_status_requires_superuser(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s)
+
+    token = await _register_login(client, VALID_USER)
+    r = await client.get(
+        "/api/billing/admin/paypal/status",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_paypal_status_hides_secret_values(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """Secret credential values must never appear in the response."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s)
+
+    token = await _create_pp_admin_token(client, fresh_engine)
+    r = await client.get(
+        "/api/billing/admin/paypal/status",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    body_str = str(body)
+    # Secrets must not appear in the response body at all
+    assert "client_id" not in body_str or body.get("client_id") is None
+    assert "client_secret" not in body_str or body.get("client_secret") is None
+    assert "webhook_id" not in body_str or body.get("webhook_id") is None
+    # Only boolean presence indicators are allowed
+    assert "client_id_configured" in body
+    assert "client_secret_configured" in body
+    assert "webhook_id_configured" in body
+    assert isinstance(body["client_id_configured"], bool)
+    assert isinstance(body["client_secret_configured"], bool)
+    assert isinstance(body["webhook_id_configured"], bool)
+
+
+@pytest.mark.asyncio
+async def test_paypal_status_missing_env_produces_missing_requirements(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """When PayPal credentials are not set, missing_requirements is non-empty."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s)
+
+    token = await _create_pp_admin_token(client, fresh_engine)
+
+    # Override settings to simulate missing credentials
+    from app.config import Settings
+    empty_settings = Settings(
+        paypal_client_id="",
+        paypal_client_secret="",
+        paypal_webhook_id="",
+    )
+    with patch("app.routes.billing.get_settings", return_value=empty_settings):
+        r = await client.get(
+            "/api/billing/admin/paypal/status",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["paypal_configured"] is False
+    assert len(body["missing_requirements"]) >= 2
+    assert any("PAYPAL_CLIENT_ID" in req for req in body["missing_requirements"])
+    assert any("PAYPAL_CLIENT_SECRET" in req for req in body["missing_requirements"])
+
+
+@pytest.mark.asyncio
+async def test_paypal_status_plan_without_paypal_id_not_ready(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """A paid plan with no external_paypal_plan_id must not be checkout_ready."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s, with_paypal_plan_id=False)
+
+    token = await _create_pp_admin_token(client, fresh_engine)
+
+    from app.config import Settings
+    configured_settings = Settings(
+        paypal_client_id="fake-id",
+        paypal_client_secret="fake-secret",
+        paypal_webhook_id="fake-wh",
+    )
+    with patch("app.routes.billing.get_settings", return_value=configured_settings):
+        r = await client.get(
+            "/api/billing/admin/paypal/status",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert r.status_code == 200
+    plans = {p["plan_code"]: p for p in r.json()["plans"]}
+    assert plans["pro"]["checkout_ready"] is False
+    assert plans["pro"]["external_paypal_plan_id_configured"] is False
+    assert plans["free"]["checkout_ready"] is False
+
+
+@pytest.mark.asyncio
+async def test_paypal_status_paid_plan_with_id_and_creds_is_ready(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """A paid active plan with external_paypal_plan_id and configured creds is checkout_ready."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s, with_paypal_plan_id=True)
+
+    token = await _create_pp_admin_token(client, fresh_engine)
+
+    from app.config import Settings
+    configured_settings = Settings(
+        paypal_client_id="fake-id",
+        paypal_client_secret="fake-secret",
+        paypal_webhook_id="fake-wh",
+        app_public_url="https://app.example.com",
+    )
+    with patch("app.routes.billing.get_settings", return_value=configured_settings):
+        r = await client.get(
+            "/api/billing/admin/paypal/status",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["paypal_configured"] is True
+    plans = {p["plan_code"]: p for p in body["plans"]}
+    assert plans["pro"]["checkout_ready"] is True
+    assert plans["pro"]["external_paypal_plan_id_configured"] is True
+    assert plans["free"]["checkout_ready"] is False
+
+
+@pytest.mark.asyncio
+async def test_paypal_status_urls_built_from_app_public_url(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s)
+
+    token = await _create_pp_admin_token(client, fresh_engine)
+
+    from app.config import Settings
+    test_settings = Settings(
+        paypal_client_id="",
+        paypal_client_secret="",
+        paypal_webhook_id="",
+        app_public_url="https://test.pharmlearn.dev",
+    )
+    with patch("app.routes.billing.get_settings", return_value=test_settings):
+        r = await client.get(
+            "/api/billing/admin/paypal/status",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["webhook_url"] == "https://test.pharmlearn.dev/api/billing/webhooks/paypal"
+    assert body["success_url"] == "https://test.pharmlearn.dev/billing/success"
+    assert body["cancel_url"] == "https://test.pharmlearn.dev/billing/cancel"
+    assert body["app_public_url"] == "https://test.pharmlearn.dev"
+
+
+# ---------------------------------------------------------------------------
+# build_paypal_config_status — unit tests for the pure helper
+# ---------------------------------------------------------------------------
+
+def test_build_status_helper_no_creds_all_missing():
+    from app.config import Settings
+    from app.services.billing_status import build_paypal_config_status
+
+    settings = Settings(
+        paypal_client_id="",
+        paypal_client_secret="",
+        paypal_webhook_id="",
+        app_public_url="http://localhost:5173",
+    )
+    result = build_paypal_config_status(settings, [])
+    assert result.client_id_configured is False
+    assert result.client_secret_configured is False
+    assert result.webhook_id_configured is False
+    assert result.paypal_configured is False
+    assert any("PAYPAL_CLIENT_ID" in m for m in result.missing_requirements)
+    assert any("PAYPAL_CLIENT_SECRET" in m for m in result.missing_requirements)
+    assert any("PAYPAL_WEBHOOK_ID" in m for m in result.missing_requirements)
+
+
+def test_build_status_helper_skip_verify_produces_warning():
+    from app.config import Settings
+    from app.services.billing_status import build_paypal_config_status
+
+    settings = Settings(
+        paypal_client_id="id",
+        paypal_client_secret="secret",
+        paypal_webhook_id="wh",
+        paypal_skip_webhook_verify=True,
+    )
+    result = build_paypal_config_status(settings, [])
+    assert any("PAYPAL_SKIP_WEBHOOK_VERIFY" in w for w in result.warnings)
+
+
+def test_build_status_helper_live_env_produces_warning():
+    from app.config import Settings
+    from app.services.billing_status import build_paypal_config_status
+
+    settings = Settings(
+        paypal_client_id="id",
+        paypal_client_secret="secret",
+        paypal_webhook_id="wh",
+        paypal_env="live",
+    )
+    result = build_paypal_config_status(settings, [])
+    assert any("live" in w.lower() for w in result.warnings)
