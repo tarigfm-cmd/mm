@@ -317,6 +317,19 @@ Goal: Complete the user-facing subscription lifecycle so users can see their act
 - [x] TypeScript check: zero errors
 - [x] DEVELOPMENT.md: pending checkout flow, success page polling, webhook new-subscriber fix, cancellation behavior, sandbox test sequence updated
 
+### Milestone 11 — PayPal Period + Renewal Handling Gate ✅ Complete
+
+- [x] `extract_paypal_period_dates(resource)` — pure helper in `paypal.py`; prefers `billing_info.last_payment.time` (renewal period start) over `start_time` (subscription origin); reads `billing_info.next_billing_time` for period_end; handles all missing/malformed data gracefully
+- [x] `WebhookVerifyResult` extended with `period_start: Optional[datetime] = None` and `period_end: Optional[datetime] = None` in `base.py`
+- [x] `verify_webhook` in `paypal.py` calls `extract_paypal_period_dates` and populates period fields in all return paths (skip_verify, no-webhook-id, full verification, error fallback)
+- [x] `_EVENT_TO_STATUS` extended with `BILLING.SUBSCRIPTION.RENEWED → active` and `BILLING.SUBSCRIPTION.PAYMENT.SUCCEEDED → active`
+- [x] Webhook handler in `billing.py`: sets `current_period_start` and `current_period_end` on active transitions (ACTIVATED, RENEWED, PAYMENT.SUCCEEDED, PAYMENT.SALE.COMPLETED); preserves both dates on PAYMENT.FAILED, SUSPENDED, CANCELLED, EXPIRED
+- [x] New subscriber ACTIVATED path: `UserSubscription` created with `current_period_start` and `current_period_end` from webhook resource
+- [x] 10 new tests — `extract_paypal_period_dates` unit tests (full data, missing billing_info, prefers last_payment.time, empty resource), new event mappings (RENEWED, PAYMENT.SUCCEEDED), ACTIVATED sets period dates on new subscriber, RENEWED advances period dates, PAYMENT.FAILED preserves period_end, CANCELLED preserves period_end
+- [x] Full suite: **391/391** backend tests passing
+- [x] TypeScript check: zero errors (no frontend changes required — types already supported period dates)
+- [x] DEVELOPMENT.md: event table updated with period date column, sandbox sequence updated with renewal step
+
 ## Phase 2 — Users & Auth (continued)
 
 Goal: Full user-facing auth and profile features.

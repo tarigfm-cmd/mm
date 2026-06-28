@@ -644,13 +644,18 @@ POST /api/billing/webhooks/paypal   (no auth required — verified by PayPal sig
 - Unresolvable events stored with `processed_status="unresolved"` — no crash
 - Raw webhook body is never stored; only a safe `payload_summary` is persisted
 
-| PayPal event | Subscription status |
-|---|---|
-| `BILLING.SUBSCRIPTION.ACTIVATED` | `active` |
-| `BILLING.SUBSCRIPTION.CANCELLED` | `canceled` |
-| `BILLING.SUBSCRIPTION.SUSPENDED` | `past_due` |
-| `BILLING.SUBSCRIPTION.EXPIRED` | `expired` |
-| `BILLING.SUBSCRIPTION.PAYMENT.FAILED` | `past_due` |
+| PayPal event | Subscription status | Period dates updated? |
+|---|---|---|
+| `BILLING.SUBSCRIPTION.ACTIVATED` | `active` | Yes — sets `current_period_start` and `current_period_end` |
+| `BILLING.SUBSCRIPTION.RENEWED` | `active` | Yes — advances both dates |
+| `BILLING.SUBSCRIPTION.PAYMENT.SUCCEEDED` | `active` | Yes — advances both dates |
+| `PAYMENT.SALE.COMPLETED` | `active` | Yes — if billing_info present |
+| `BILLING.SUBSCRIPTION.CANCELLED` | `canceled` | No — preserves `current_period_end` |
+| `BILLING.SUBSCRIPTION.SUSPENDED` | `past_due` | No — preserves all dates |
+| `BILLING.SUBSCRIPTION.EXPIRED` | `expired` | No — preserves all dates |
+| `BILLING.SUBSCRIPTION.PAYMENT.FAILED` | `past_due` | No — preserves `current_period_end` |
+
+Period dates are extracted from `resource.billing_info.last_payment.time` (preferred for renewals), falling back to `resource.start_time` for period_start, and `resource.billing_info.next_billing_time` for period_end. The `extract_paypal_period_dates(resource)` helper in `paypal.py` handles all parsing and None-safety.
 
 ### Pending checkout tracking
 
@@ -689,8 +694,9 @@ The billing page shows a "Cancel subscription" button with confirmation for user
 1. User clicks **Pay with PayPal** → `POST /checkout/paypal` → `PaymentCheckoutSession(status=pending_activation)` created
 2. User approves on PayPal → redirected to `/billing/success`
 3. `/billing/success` polls `GET /me/subscription` — shows `payment_state_message=pending_activation`
-4. PayPal POSTs `BILLING.SUBSCRIPTION.ACTIVATED` → webhook creates `UserSubscription(status=active)` + marks checkout `activated`
+4. PayPal POSTs `BILLING.SUBSCRIPTION.ACTIVATED` → webhook creates `UserSubscription(status=active)` with `current_period_start` / `current_period_end` extracted from `resource.start_time` and `resource.billing_info.next_billing_time`; marks checkout `activated`
 5. Next poll on success page detects `status=active` → shows green confirmation
+6. On renewal, PayPal POSTs `BILLING.SUBSCRIPTION.RENEWED` → `current_period_start` advances to `billing_info.last_payment.time`; `current_period_end` advances to `billing_info.next_billing_time`
 
 ### Running PayPal tests
 
@@ -699,7 +705,7 @@ cd backend
 pytest tests/test_paypal.py -v
 ```
 
-61 tests — no real PayPal credentials required. All HTTP calls are mocked.
+71 tests — no real PayPal credentials required. All HTTP calls are mocked.
 
 ### Payment integrations excluded
 

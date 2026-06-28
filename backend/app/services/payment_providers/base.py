@@ -1,6 +1,7 @@
 """Abstract base class for payment providers."""
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Optional
 
 
@@ -21,6 +22,8 @@ class WebhookVerifyResult:
     resource_status: Optional[str]
     custom_id: Optional[str]  # set by us at subscription creation; used to resolve user
     payload_summary: dict
+    period_start: Optional[datetime] = field(default=None)
+    period_end: Optional[datetime] = field(default=None)
 
 
 class PaymentProviderBase(ABC):

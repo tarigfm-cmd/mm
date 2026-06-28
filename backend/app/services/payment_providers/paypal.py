@@ -17,6 +17,7 @@ PayPal subscription flow:
 """
 import json
 import logging
+from datetime import datetime
 from typing import Optional
 
 import httpx
@@ -41,13 +42,42 @@ _PAYPAL_STATUS_MAP: dict[str, str] = {
 # PayPal event type → internal subscription status transition
 _EVENT_TO_STATUS: dict[str, str] = {
     "BILLING.SUBSCRIPTION.ACTIVATED": "active",
+    "BILLING.SUBSCRIPTION.RENEWED": "active",
     "BILLING.SUBSCRIPTION.CANCELLED": "canceled",
     "BILLING.SUBSCRIPTION.SUSPENDED": "past_due",
     "BILLING.SUBSCRIPTION.EXPIRED": "expired",
     "BILLING.SUBSCRIPTION.PAYMENT.FAILED": "past_due",
-    # Payment completed events confirm activity; no status change needed
+    "BILLING.SUBSCRIPTION.PAYMENT.SUCCEEDED": "active",
     "PAYMENT.SALE.COMPLETED": "active",
 }
+
+
+def extract_paypal_period_dates(
+    resource: dict,
+) -> tuple[Optional[datetime], Optional[datetime]]:
+    """Extract (period_start, period_end) from a PayPal webhook resource object.
+
+    For ACTIVATED events: start_time is the period start.
+    For RENEWED events: billing_info.last_payment.time is the renewal period start
+    (start_time is the original subscription creation date, not the renewal date).
+    period_end comes from billing_info.next_billing_time in both cases.
+    """
+    def _parse(s: object) -> Optional[datetime]:
+        if not isinstance(s, str) or not s:
+            return None
+        try:
+            return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return None
+
+    billing_info: dict = resource.get("billing_info") or {}
+    last_payment: dict = billing_info.get("last_payment") or {}
+
+    # Prefer last_payment.time (renewal period start) over start_time (subscription origin)
+    period_start = _parse(last_payment.get("time")) or _parse(resource.get("start_time"))
+    period_end = _parse(billing_info.get("next_billing_time"))
+
+    return period_start, period_end
 
 
 class PayPalNotConfiguredError(Exception):
@@ -195,6 +225,7 @@ class PayPalProvider(PaymentProviderBase):
         resource_id: Optional[str] = resource.get("id")
         resource_status: Optional[str] = resource.get("status")
         custom_id: Optional[str] = resource.get("custom_id")
+        period_start, period_end = extract_paypal_period_dates(resource)
 
         payload_summary = {
             "event_type": event_type,
@@ -212,6 +243,8 @@ class PayPalProvider(PaymentProviderBase):
                 resource_status=resource_status,
                 custom_id=custom_id,
                 payload_summary=payload_summary,
+                period_start=period_start,
+                period_end=period_end,
             )
 
         if not self._webhook_id:
@@ -224,6 +257,8 @@ class PayPalProvider(PaymentProviderBase):
                 resource_status=resource_status,
                 custom_id=custom_id,
                 payload_summary=payload_summary,
+                period_start=period_start,
+                period_end=period_end,
             )
 
         try:
@@ -259,6 +294,8 @@ class PayPalProvider(PaymentProviderBase):
                 resource_status=resource_status,
                 custom_id=custom_id,
                 payload_summary=payload_summary,
+                period_start=period_start,
+                period_end=period_end,
             )
 
         return WebhookVerifyResult(
@@ -269,6 +306,8 @@ class PayPalProvider(PaymentProviderBase):
             resource_status=resource_status,
             custom_id=custom_id,
             payload_summary=payload_summary,
+            period_start=period_start,
+            period_end=period_end,
         )
 
     async def cancel_subscription(

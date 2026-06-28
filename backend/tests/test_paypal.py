@@ -101,6 +101,8 @@ def _verified_result(
     event_id: str = "EVT-001",
     resource_id: str = "SUB-123",
     custom_id: str | None = None,
+    period_start: datetime | None = None,
+    period_end: datetime | None = None,
 ) -> WebhookVerifyResult:
     return WebhookVerifyResult(
         verified=verified,
@@ -110,6 +112,8 @@ def _verified_result(
         resource_status="ACTIVE",
         custom_id=custom_id,
         payload_summary={"event_type": event_type, "event_id": event_id},
+        period_start=period_start,
+        period_end=period_end,
     )
 
 
@@ -1696,3 +1700,299 @@ async def test_cancel_requires_auth(client: AsyncClient, fresh_engine: Any) -> N
     """Cancel endpoint must require authentication."""
     r = await client.post("/api/billing/me/subscription/cancel")
     assert r.status_code in (401, 403)
+
+
+# ---------------------------------------------------------------------------
+# Milestone 11: period date extraction unit tests
+# ---------------------------------------------------------------------------
+
+def test_extract_paypal_period_dates_full_resource() -> None:
+    """Full resource with billing_info returns correct period dates."""
+    from app.services.payment_providers.paypal import extract_paypal_period_dates
+
+    resource = {
+        "id": "I-SUB-123",
+        "start_time": "2024-01-01T00:00:00Z",
+        "billing_info": {
+            "next_billing_time": "2024-02-01T00:00:00Z",
+            "last_payment": {
+                "time": "2024-01-01T00:00:00Z",
+            },
+        },
+    }
+    period_start, period_end = extract_paypal_period_dates(resource)
+    assert period_start is not None
+    assert period_end is not None
+    assert period_start.year == 2024 and period_start.month == 1 and period_start.day == 1
+    assert period_end.year == 2024 and period_end.month == 2 and period_end.day == 1
+
+
+def test_extract_paypal_period_dates_missing_billing_info() -> None:
+    """Resource without billing_info returns (None, None) gracefully."""
+    from app.services.payment_providers.paypal import extract_paypal_period_dates
+
+    resource = {"id": "I-SUB-NO-BILLING", "start_time": "2024-03-01T00:00:00Z"}
+    period_start, period_end = extract_paypal_period_dates(resource)
+    assert period_start is not None  # from start_time
+    assert period_end is None  # no next_billing_time
+
+
+def test_extract_paypal_period_dates_prefers_last_payment_over_start_time() -> None:
+    """For renewals: last_payment.time is preferred over start_time for period_start."""
+    from app.services.payment_providers.paypal import extract_paypal_period_dates
+
+    resource = {
+        "id": "I-RENEW-1",
+        "start_time": "2024-01-01T00:00:00Z",  # original subscription start
+        "billing_info": {
+            "last_payment": {"time": "2024-03-01T00:00:00Z"},  # renewal payment date
+            "next_billing_time": "2024-04-01T00:00:00Z",
+        },
+    }
+    period_start, period_end = extract_paypal_period_dates(resource)
+    # Should use last_payment.time (March), not start_time (January)
+    assert period_start is not None
+    assert period_start.month == 3
+    assert period_end is not None
+    assert period_end.month == 4
+
+
+def test_extract_paypal_period_dates_empty_resource() -> None:
+    """Completely empty resource returns (None, None) without raising."""
+    from app.services.payment_providers.paypal import extract_paypal_period_dates
+
+    period_start, period_end = extract_paypal_period_dates({})
+    assert period_start is None
+    assert period_end is None
+
+
+# ---------------------------------------------------------------------------
+# Milestone 11: new _EVENT_TO_STATUS entries
+# ---------------------------------------------------------------------------
+
+def test_event_to_status_renewed() -> None:
+    assert PayPalProvider.event_to_subscription_status("BILLING.SUBSCRIPTION.RENEWED") == "active"
+
+
+def test_event_to_status_payment_succeeded() -> None:
+    assert PayPalProvider.event_to_subscription_status("BILLING.SUBSCRIPTION.PAYMENT.SUCCEEDED") == "active"
+
+
+# ---------------------------------------------------------------------------
+# Milestone 11: period date population on webhook events
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_webhook_activated_sets_period_dates_on_new_subscriber(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """BILLING.SUBSCRIPTION.ACTIVATED must populate current_period_start/end on new UserSubscription."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        plans = await _seed_plans(s)
+        pro_plan_id = plans["pro"].id
+
+    token = await _register_login(client, VALID_USER)
+    r_me = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    user_id = uuid.UUID(r_me.json()["id"])
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        cs = PaymentCheckoutSession(
+            user_id=user_id, plan_id=pro_plan_id, provider="paypal",
+            external_subscription_id="SUB-PERIOD-NEW-1", status="pending_activation",
+        )
+        s.add(cs)
+        await s.commit()
+
+    period_start = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    period_end = datetime(2024, 7, 1, tzinfo=timezone.utc)
+    verify = _verified_result(
+        event_type="BILLING.SUBSCRIPTION.ACTIVATED",
+        event_id="EVT-PERIOD-NEW-1",
+        resource_id="SUB-PERIOD-NEW-1",
+        period_start=period_start,
+        period_end=period_end,
+    )
+    provider = _mock_provider(verify_result=verify)
+
+    with patch("app.routes.billing.get_paypal_provider", return_value=provider):
+        r = await client.post(
+            "/api/billing/webhooks/paypal",
+            content=_webhook_body("BILLING.SUBSCRIPTION.ACTIVATED", "EVT-PERIOD-NEW-1"),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert r.status_code == 200
+    assert r.json()["status"] == "processed"
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        sub = (
+            await s.execute(
+                select(UserSubscription).where(
+                    UserSubscription.user_id == user_id,
+                    UserSubscription.external_subscription_id == "SUB-PERIOD-NEW-1",
+                )
+            )
+        ).scalar_one_or_none()
+
+    assert sub is not None
+    assert sub.current_period_start is not None
+    assert sub.current_period_end is not None
+    assert sub.current_period_start.replace(tzinfo=timezone.utc).date() == period_start.date()
+    assert sub.current_period_end.replace(tzinfo=timezone.utc).date() == period_end.date()
+
+
+@pytest.mark.asyncio
+async def test_webhook_renewed_advances_period_dates(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """BILLING.SUBSCRIPTION.RENEWED must update current_period_start and current_period_end."""
+    old_period_start = datetime(2024, 5, 1, tzinfo=timezone.utc)
+    old_period_end = datetime(2024, 6, 1, tzinfo=timezone.utc)
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        plans = await _seed_plans(s)
+        user_id = uuid.uuid4()
+        user = User(
+            id=user_id, email="pp_renew@example.com", username="pprenew",
+            full_name="Renew User", hashed_password="x",
+        )
+        s.add(user)
+        sub = UserSubscription(
+            user_id=user_id, plan_id=plans["pro"].id, status="active",
+            external_provider="paypal", external_subscription_id="SUB-RENEW-1",
+            current_period_start=old_period_start,
+            current_period_end=old_period_end,
+        )
+        s.add(sub)
+        await s.commit()
+        sub_db_id = sub.id
+
+    new_period_start = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    new_period_end = datetime(2024, 7, 1, tzinfo=timezone.utc)
+    verify = _verified_result(
+        event_type="BILLING.SUBSCRIPTION.RENEWED",
+        event_id="EVT-RENEW-1",
+        resource_id="SUB-RENEW-1",
+        period_start=new_period_start,
+        period_end=new_period_end,
+    )
+    provider = _mock_provider(verify_result=verify)
+
+    with patch("app.routes.billing.get_paypal_provider", return_value=provider):
+        r = await client.post(
+            "/api/billing/webhooks/paypal",
+            content=_webhook_body("BILLING.SUBSCRIPTION.RENEWED", "EVT-RENEW-1"),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert r.status_code == 200
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        updated = await s.get(UserSubscription, sub_db_id)
+
+    assert updated.status == "active"
+    assert updated.current_period_start is not None
+    assert updated.current_period_end is not None
+    assert updated.current_period_start.replace(tzinfo=timezone.utc).date() == new_period_start.date()
+    assert updated.current_period_end.replace(tzinfo=timezone.utc).date() == new_period_end.date()
+
+
+@pytest.mark.asyncio
+async def test_webhook_payment_failed_sets_past_due_preserves_period_end(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """BILLING.SUBSCRIPTION.PAYMENT.FAILED must set past_due but NOT overwrite current_period_end."""
+    existing_period_end = datetime(2024, 7, 1, tzinfo=timezone.utc)
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        plans = await _seed_plans(s)
+        user_id = uuid.uuid4()
+        user = User(
+            id=user_id, email="pp_failperiod@example.com", username="ppfailperiod",
+            full_name="Fail Period User", hashed_password="x",
+        )
+        s.add(user)
+        sub = UserSubscription(
+            user_id=user_id, plan_id=plans["pro"].id, status="active",
+            external_provider="paypal", external_subscription_id="SUB-FAILPERIOD-1",
+            current_period_end=existing_period_end,
+        )
+        s.add(sub)
+        await s.commit()
+        sub_db_id = sub.id
+
+    # PAYMENT.FAILED webhook arrives with no period dates (none to offer)
+    verify = _verified_result(
+        event_type="BILLING.SUBSCRIPTION.PAYMENT.FAILED",
+        event_id="EVT-FAILPERIOD-1",
+        resource_id="SUB-FAILPERIOD-1",
+        period_start=None,
+        period_end=None,
+    )
+    provider = _mock_provider(verify_result=verify)
+
+    with patch("app.routes.billing.get_paypal_provider", return_value=provider):
+        r = await client.post(
+            "/api/billing/webhooks/paypal",
+            content=_webhook_body("BILLING.SUBSCRIPTION.PAYMENT.FAILED", "EVT-FAILPERIOD-1"),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert r.status_code == 200
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        updated = await s.get(UserSubscription, sub_db_id)
+
+    assert updated.status == "past_due"
+    assert updated.current_period_end is not None
+    assert updated.current_period_end.replace(tzinfo=timezone.utc).date() == existing_period_end.date()
+
+
+@pytest.mark.asyncio
+async def test_webhook_cancelled_preserves_period_end(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """BILLING.SUBSCRIPTION.CANCELLED must set canceled status but preserve current_period_end."""
+    existing_period_end = datetime(2024, 8, 1, tzinfo=timezone.utc)
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        plans = await _seed_plans(s)
+        user_id = uuid.uuid4()
+        user = User(
+            id=user_id, email="pp_cancelperiod@example.com", username="ppcancelperiod",
+            full_name="Cancel Period User", hashed_password="x",
+        )
+        s.add(user)
+        sub = UserSubscription(
+            user_id=user_id, plan_id=plans["pro"].id, status="active",
+            external_provider="paypal", external_subscription_id="SUB-CANCELPERIOD-1",
+            current_period_end=existing_period_end,
+        )
+        s.add(sub)
+        await s.commit()
+        sub_db_id = sub.id
+
+    verify = _verified_result(
+        event_type="BILLING.SUBSCRIPTION.CANCELLED",
+        event_id="EVT-CANCELPERIOD-1",
+        resource_id="SUB-CANCELPERIOD-1",
+        period_start=None,
+        period_end=None,
+    )
+    provider = _mock_provider(verify_result=verify)
+
+    with patch("app.routes.billing.get_paypal_provider", return_value=provider):
+        r = await client.post(
+            "/api/billing/webhooks/paypal",
+            content=_webhook_body("BILLING.SUBSCRIPTION.CANCELLED", "EVT-CANCELPERIOD-1"),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert r.status_code == 200
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        updated = await s.get(UserSubscription, sub_db_id)
+
+    assert updated.status == "canceled"
+    assert updated.current_period_end is not None
+    assert updated.current_period_end.replace(tzinfo=timezone.utc).date() == existing_period_end.date()

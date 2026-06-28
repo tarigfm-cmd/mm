@@ -518,6 +518,12 @@ async def paypal_webhook(
             if verify_result.external_subscription_id:
                 user_sub.external_subscription_id = verify_result.external_subscription_id
             user_sub.external_provider = "paypal"
+            # Update billing period dates only on active transitions; preserve on failure/cancel
+            if new_sub_status == "active":
+                if verify_result.period_start is not None:
+                    user_sub.current_period_start = verify_result.period_start
+                if verify_result.period_end is not None:
+                    user_sub.current_period_end = verify_result.period_end
             webhook_event.processed_status = "processed"
             # Mark any pending checkout session as activated
             if new_sub_status == "active" and verify_result.external_subscription_id:
@@ -569,6 +575,8 @@ async def paypal_webhook(
                     status="active",
                     external_provider="paypal",
                     external_subscription_id=verify_result.external_subscription_id,
+                    current_period_start=verify_result.period_start,
+                    current_period_end=verify_result.period_end,
                 )
                 db.add(new_sub)
                 checkout_session.status = "activated"
