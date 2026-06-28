@@ -73,6 +73,27 @@ Goal: Production-grade content lifecycle management before learner-facing featur
 - [x] 49 import pipeline tests (209 total, all passing)
 - [x] `CONTENT_GOVERNANCE.md` — updated with full import API reference, validation rules, security constraints
 
+## Admin and Reviewer Content Governance UI (Current)
+
+Goal: Internal admin interface for managing the community pharmacy content lifecycle — not a learner UI.
+
+- [x] `AdminRoute` — superuser gate; non-superusers see "Insufficient permissions" screen
+- [x] `GovernanceLayout` — horizontal tab nav inside main content area (no second sidebar)
+- [x] `GovernanceDashboard` — 6-stat overview (total, pending review, approved, published) + quick links + evidence due panel
+- [x] `ImportCenter` — 4-step wizard: upload → preview (blue) → optional approval batch → commit (amber); ConfirmActionDialog before commit
+- [x] `ApprovalBatchesPage` — create and list pharmacist team sign-off batches with region toggles
+- [x] `ContentLibraryPage` — paginated table (20/page) with status, type, and domain filters
+- [x] `ContentDetailPage` — metadata grid, version history with rollback, clinical review submission, per-region publish/unpublish; all destructive actions confirmed
+- [x] `EvidenceManagementPage` — due-for-review amber alert, region/status filters, create form, inline edit
+- [x] `RegionRulesPage` — read-only view of UK/US/GCC/AU with regulatory context note; backend management endpoints not yet exposed
+- [x] Shared components: StatCard, StatusBadge, RegionBadge, ContentTypeBadge, EvidenceStatusBadge, ConfirmActionDialog, FileUploadPanel, ImportPreviewTable, CommitResultPanel
+- [x] `governanceApi.ts` — separate Axios instance; import endpoints with 300 s/600 s timeouts; all CRUD for content, evidence, batches, reviews, publish/unpublish
+- [x] `types/governance.ts` — full TypeScript schema mirroring all backend Pydantic models
+- [x] Navigation updated — "Governance" link visible only to superusers (ShieldCheckIcon, amber active state)
+- [x] `App.tsx` — all 7 governance pages registered as lazy routes under `/admin/governance`
+- [x] TypeScript check: `npx tsc --noEmit` passes with zero errors
+- [x] DEVELOPMENT.md + CONTENT_GOVERNANCE.md + ROADMAP.md updated
+
 ## Phase 2 — Users & Auth (continued)
 
 Goal: Full user-facing auth and profile features.

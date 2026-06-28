@@ -334,3 +334,53 @@ The Alembic migration replicates this by calling `op.create_foreign_key(...)` af
 - `is_superuser` bypass follows existing platform rules
 - No secrets, tokens, or clinical wording is logged — `extra_data` contains only safe metadata (IDs, field names, status strings)
 - Clinical content is **never auto-generated** — all content payload comes from the caller (educator/admin); the API does not invoke the AI service for content creation
+
+## Admin Governance UI Workflow
+
+The governance UI lives at `/admin/governance` and is accessible only to `is_superuser` users.
+
+### Full workflow: import → review → publish
+
+```
+1. Import Center (/admin/governance/import)
+   a. Upload CSV or ZIP content package
+   b. Run Preview — validates all rows, shows error breakdown, detects duplicates
+   c. Optionally link an Approval Batch (pre-approved by pharmacist team)
+   d. Confirm commit — writes ContentItems + ContentVersions to DB as pending_review
+
+2. Approval Batches (/admin/governance/approval-batches)
+   - Create an ApprovalBatch before import if the content was externally reviewed
+   - Batch records the team, timestamp, statement, and optional manifest hash
+
+3. Content Library (/admin/governance/content)
+   - Browse all items with filters: status, content_type, domain
+   - Paginated (20/page); click "View →" to open detail
+
+4. Content Detail (/admin/governance/content/:id)
+   a. Review metadata: status, type, domain, difficulty, region scope
+   b. Version history: current version highlighted; older versions have Rollback button
+      - Rollback requires explicit confirmation
+   c. Clinical reviews: list approved / rejected reviews; submit a new review with decision + notes
+   d. Publish / Unpublish per region:
+      - Select a region (UK / US / GCC / AU), add optional reason
+      - Publish and Unpublish each require explicit confirmation dialogs
+      - Backend enforces RegionPublishingRule checks + clinical review gate
+
+5. Evidence Management (/admin/governance/evidence)
+   - Amber alert when sources are overdue for review
+   - Filter by region and status
+   - Add new evidence sources; inline-edit title, status, next review date
+
+6. Regions (/admin/governance/regions)
+   - Read-only view of the four known regions and their regulatory context
+   - Region publishing rule management endpoints are not yet exposed
+```
+
+### UI safety rules enforced
+
+- Import preview is visually distinct from commit (blue vs amber theme)
+- Commit button disabled until preview shows zero errors
+- All destructive/high-impact actions (commit, publish, unpublish, rollback) require `ConfirmActionDialog`
+- Governance pages never shown to unauthenticated or non-superuser users
+- Full raw clinical payload is never displayed in audit or version history views
+- No content is auto-published at any point in the UI workflow

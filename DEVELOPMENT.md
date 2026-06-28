@@ -193,3 +193,37 @@ In development the app auto-creates tables via `Base.metadata.create_all` on sta
 6. Add API methods in `frontend/src/services/api.ts`
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for module boundary conventions.
+
+## Admin Governance UI
+
+The content governance section lives at `/admin/governance` and is guarded by `is_superuser`.
+
+### Route map
+
+| URL | Page |
+|-----|------|
+| `/admin/governance` | GovernanceDashboard (stats + quick links) |
+| `/admin/governance/import` | ImportCenter (CSV/ZIP preview → commit wizard) |
+| `/admin/governance/approval-batches` | ApprovalBatchesPage (team sign-off records) |
+| `/admin/governance/content` | ContentLibraryPage (paginated table with filters) |
+| `/admin/governance/content/:id` | ContentDetailPage (item detail, versions, reviews, publish) |
+| `/admin/governance/evidence` | EvidenceManagementPage (evidence sources, due-for-review alert) |
+| `/admin/governance/regions` | RegionRulesPage (read-only; management endpoints not yet exposed) |
+
+### Access control
+
+The `AdminRoute` component (rendered before `GovernanceLayout`) checks `currentUser.is_superuser`.
+Non-superusers see an "Insufficient permissions" screen instead of the governance UI.
+Backend RBAC enforces the same constraint on every API call — the frontend gate is presentational only.
+
+### Governance API client
+
+`frontend/src/services/governanceApi.ts` — separate Axios instance with the same JWT refresh interceptor pattern as `api.ts`. All import endpoints are multipart/form-data with extended timeouts (preview 300 s, commit 600 s).
+
+### Import rules (enforced in UI + backend)
+
+- Only CSV or ZIP content packages may be uploaded. The Excel dashboard must NOT be uploaded here.
+- Always run Preview before committing — the "Commit Import" button is disabled until preview shows zero errors.
+- All committed items land in `pending_review`; nothing is auto-published.
+- Commit requires explicit confirmation via `ConfirmActionDialog`.
+- Publish and Unpublish actions each require explicit per-region confirmation.

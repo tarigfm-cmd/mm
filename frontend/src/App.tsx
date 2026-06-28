@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import LoadingSpinner from '@/components/LoadingSpinner'
 import ProtectedRoute from '@/components/ProtectedRoute'
+import AdminRoute from '@/components/AdminRoute'
 import { useAuthInit } from '@/hooks/useAuthInit'
 
 const Dashboard = lazy(() => import('@/pages/Dashboard'))
@@ -14,6 +15,16 @@ const OrgDetailPage = lazy(() => import('@/pages/OrgDetailPage'))
 const ProgressPage = lazy(() => import('@/pages/ProgressPage'))
 const LoginPage = lazy(() => import('@/pages/LoginPage'))
 const RegisterPage = lazy(() => import('@/pages/RegisterPage'))
+
+// Governance admin pages
+const GovernanceLayout = lazy(() => import('@/components/governance/GovernanceLayout'))
+const GovernanceDashboard = lazy(() => import('@/pages/governance/GovernanceDashboard'))
+const ImportCenter = lazy(() => import('@/pages/governance/ImportCenter'))
+const ApprovalBatchesPage = lazy(() => import('@/pages/governance/ApprovalBatchesPage'))
+const ContentLibraryPage = lazy(() => import('@/pages/governance/ContentLibraryPage'))
+const ContentDetailPage = lazy(() => import('@/pages/governance/ContentDetailPage'))
+const EvidenceManagementPage = lazy(() => import('@/pages/governance/EvidenceManagementPage'))
+const RegionRulesPage = lazy(() => import('@/pages/governance/RegionRulesPage'))
 
 function PageLoader() {
   return (
@@ -39,6 +50,20 @@ function AppRoutes() {
         <Route path="/orgs" element={<OrganizationsPage />} />
         <Route path="/orgs/:slug" element={<OrgDetailPage />} />
         <Route path="/progress" element={<ProgressPage />} />
+
+        {/* Admin-only governance routes */}
+        <Route element={<AdminRoute />}>
+          <Route path="/admin/governance" element={<GovernanceLayout />}>
+            <Route index element={<GovernanceDashboard />} />
+            <Route path="import" element={<ImportCenter />} />
+            <Route path="approval-batches" element={<ApprovalBatchesPage />} />
+            <Route path="content" element={<ContentLibraryPage />} />
+            <Route path="content/:id" element={<ContentDetailPage />} />
+            <Route path="evidence" element={<EvidenceManagementPage />} />
+            <Route path="regions" element={<RegionRulesPage />} />
+          </Route>
+        </Route>
+
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
