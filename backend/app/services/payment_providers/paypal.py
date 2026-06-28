@@ -44,7 +44,8 @@ _EVENT_TO_STATUS: dict[str, str] = {
     "BILLING.SUBSCRIPTION.CANCELLED": "canceled",
     "BILLING.SUBSCRIPTION.SUSPENDED": "past_due",
     "BILLING.SUBSCRIPTION.EXPIRED": "expired",
-    # Payment completed events just confirm activity; don't change subscription status
+    "BILLING.SUBSCRIPTION.PAYMENT.FAILED": "past_due",
+    # Payment completed events confirm activity; no status change needed
     "PAYMENT.SALE.COMPLETED": "active",
 }
 
@@ -63,11 +64,13 @@ class PayPalProvider(PaymentProviderBase):
         webhook_id: str,
         env: str = "sandbox",
         skip_verify: bool = False,
+        brand_name: str = "PharmLearn",
     ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
         self._webhook_id = webhook_id
         self._skip_verify = skip_verify
+        self._brand_name = brand_name
         self._base_url = (
             "https://api-m.sandbox.paypal.com"
             if env != "live"
@@ -102,23 +105,24 @@ class PayPalProvider(PaymentProviderBase):
         self,
         *,
         plan_code: str,
+        paypal_plan_id: str,
         price_monthly_cents: int,
         currency: str,
         user_id: str,
         return_url: str,
         cancel_url: str,
     ) -> CheckoutResult:
-        """Create a PayPal subscription and return the approval URL.
+        """Create a PayPal subscription using the given PayPal billing plan ID.
 
-        NOTE: PayPal requires a pre-created billing plan ID (from the PayPal dashboard
-        or Catalog API). In this implementation we look for a PayPal plan ID via the
-        environment variable PAYPAL_PLAN_ID_{PLAN_CODE.upper()} so operators can map
-        our plan codes to their PayPal billing plan IDs without code changes.
-
-        If no PayPal plan ID is found for the requested plan_code, we fall back to
-        creating a one-time order as a placeholder (useful for sandbox testing).
+        Args:
+            plan_code: Internal plan code (for logging only — not sent to PayPal).
+            paypal_plan_id: The PayPal billing plan ID (P-xxxx) from the PayPal dashboard.
+            price_monthly_cents: Plan price in cents (for logging/metadata only).
+            currency: Currency code (e.g. GBP).
+            user_id: Internal user UUID string — stored as custom_id and echoed in webhook.
+            return_url: URL PayPal redirects to after approval.
+            cancel_url: URL PayPal redirects to if user cancels.
         """
-        import os
         self._require_configured()
 
         token = await self._get_access_token()
@@ -128,76 +132,39 @@ class PayPalProvider(PaymentProviderBase):
             "Prefer": "return=representation",
         }
 
-        # Try to use a pre-created PayPal billing plan ID from env
-        paypal_plan_id = os.environ.get(f"PAYPAL_PLAN_ID_{plan_code.upper()}", "")
+        payload = {
+            "plan_id": paypal_plan_id,
+            "custom_id": user_id,
+            "application_context": {
+                "brand_name": self._brand_name,
+                "return_url": return_url,
+                "cancel_url": cancel_url,
+                "user_action": "SUBSCRIBE_NOW",
+                "shipping_preference": "NO_SHIPPING",
+            },
+        }
 
-        if paypal_plan_id:
-            payload = {
-                "plan_id": paypal_plan_id,
-                "custom_id": user_id,  # echoed back in webhook; used to resolve user
-                "application_context": {
-                    "return_url": return_url,
-                    "cancel_url": cancel_url,
-                    "user_action": "SUBSCRIBE_NOW",
-                },
-            }
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"{self._base_url}/v1/billing/subscriptions",
-                    json=payload,
-                    headers=headers,
-                    timeout=30,
-                )
-                resp.raise_for_status()
-                data = resp.json()
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{self._base_url}/v1/billing/subscriptions",
+                json=payload,
+                headers=headers,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
-            sub_id = data.get("id", "")
-            approval_url = next(
-                (lnk["href"] for lnk in data.get("links", []) if lnk["rel"] == "approve"),
-                return_url,
-            )
-            return CheckoutResult(
-                checkout_url=approval_url,
-                external_subscription_id=sub_id,
-                status="pending_redirect",
-                provider="paypal",
-            )
-        else:
-            # Fallback: create a one-time order (sandbox/demo only)
-            amount = f"{price_monthly_cents / 100:.2f}"
-            payload = {
-                "intent": "CAPTURE",
-                "purchase_units": [{
-                    "amount": {"currency_code": currency, "value": amount},
-                    "description": f"PharmLearn {plan_code} plan",
-                    "custom_id": user_id,
-                }],
-                "application_context": {
-                    "return_url": return_url,
-                    "cancel_url": cancel_url,
-                },
-            }
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"{self._base_url}/v2/checkout/orders",
-                    json=payload,
-                    headers=headers,
-                    timeout=30,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-
-            order_id = data.get("id", "")
-            approval_url = next(
-                (lnk["href"] for lnk in data.get("links", []) if lnk["rel"] == "approve"),
-                return_url,
-            )
-            return CheckoutResult(
-                checkout_url=approval_url,
-                external_subscription_id=order_id,
-                status="pending_redirect",
-                provider="paypal",
-            )
+        sub_id = data.get("id", "")
+        approval_url = next(
+            (lnk["href"] for lnk in data.get("links", []) if lnk["rel"] == "approve"),
+            return_url,
+        )
+        return CheckoutResult(
+            checkout_url=approval_url,
+            external_subscription_id=sub_id,
+            status="pending_redirect",
+            provider="paypal",
+        )
 
     async def verify_webhook(
         self,

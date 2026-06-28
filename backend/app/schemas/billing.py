@@ -22,6 +22,7 @@ class SubscriptionPlanRead(BaseModel):
     allows_ai_tutor: bool
     allows_osce: bool
     allows_games: bool
+    external_paypal_plan_id: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

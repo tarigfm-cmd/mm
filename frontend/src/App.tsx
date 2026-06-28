@@ -17,6 +17,8 @@ const LoginPage = lazy(() => import('@/pages/LoginPage'))
 const RegisterPage = lazy(() => import('@/pages/RegisterPage'))
 const ProfilePage = lazy(() => import('@/pages/ProfilePage'))
 const BillingPage = lazy(() => import('@/pages/BillingPage'))
+const PayPalSuccessPage = lazy(() => import('@/pages/PayPalSuccessPage'))
+const PayPalCancelPage = lazy(() => import('@/pages/PayPalCancelPage'))
 
 // Learner training pages
 const TrainingLibraryPage = lazy(() => import('@/pages/learn/TrainingLibraryPage'))
@@ -66,6 +68,8 @@ function AppRoutes() {
         {/* Account */}
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/billing" element={<BillingPage />} />
+        <Route path="/billing/success" element={<PayPalSuccessPage />} />
+        <Route path="/billing/cancel" element={<PayPalCancelPage />} />
 
         {/* Admin-only governance routes */}
         <Route element={<AdminRoute />}>

@@ -14,6 +14,7 @@ export interface SubscriptionPlanRead {
   allows_ai_tutor: boolean
   allows_osce: boolean
   allows_games: boolean
+  external_paypal_plan_id: string | null
 }
 
 export interface UserSubscriptionRead {

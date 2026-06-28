@@ -183,15 +183,21 @@ async def paypal_checkout(
             status_code=422,
             detail="PayPal checkout is not available for the free plan.",
         )
+    if not plan_row.external_paypal_plan_id:
+        raise HTTPException(
+            status_code=422,
+            detail=f"PayPal checkout is not configured for the '{body.plan_code}' plan yet. Contact admin.",
+        )
 
     from app.config import get_settings
     settings = get_settings()
-    return_url = f"{settings.app_public_url}/billing/paypal/return"
-    cancel_url = f"{settings.app_public_url}/billing/paypal/cancel"
+    return_url = f"{settings.app_public_url}/billing/success"
+    cancel_url = f"{settings.app_public_url}/billing/cancel"
 
     try:
         result = await provider.create_subscription(
             plan_code=body.plan_code,
+            paypal_plan_id=plan_row.external_paypal_plan_id,
             price_monthly_cents=plan_row.price_monthly_cents,
             currency=plan_row.currency,
             user_id=str(current_user.id),
@@ -279,7 +285,7 @@ async def paypal_webhook(
         ).scalar_one_or_none()
 
         if user_sub is None and verify_result.custom_id:
-            # Try resolving via custom_id (user_id set at checkout)
+            # Fall back to resolving via custom_id (user_id we set at checkout)
             try:
                 user_uuid = uuid.UUID(verify_result.custom_id)
                 user_sub = (
@@ -290,18 +296,8 @@ async def paypal_webhook(
                         ).order_by(UserSubscription.created_at.desc()).limit(1)
                     )
                 ).scalar_one_or_none()
-                if user_sub is None:
-                    # Create a new subscription tied to the user
-                    free_plan = (
-                        await db.execute(
-                            select(SubscriptionPlan).where(SubscriptionPlan.code == "free").limit(1)
-                        )
-                    ).scalar_one_or_none()
-                    if free_plan:
-                        # We'll update after we find/create the plan association
-                        pass
             except ValueError:
-                user_uuid = None
+                pass
 
         if user_sub is not None:
             user_sub.status = new_sub_status

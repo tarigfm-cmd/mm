@@ -501,33 +501,74 @@ PAYPAL_SKIP_WEBHOOK_VERIFY=false  # Set "true" in dev/test only. NEVER true in p
 
 # Public URL for PayPal return/cancel redirects
 APP_PUBLIC_URL=http://localhost:5173
-
-# Map plan codes to pre-created PayPal billing plan IDs (from PayPal dashboard or Catalog API)
-# If unset, falls back to a one-time order (sandbox/demo only)
-PAYPAL_PLAN_ID_PRO=P-XXXXXXXXXXXXXXXXXXXX
-PAYPAL_PLAN_ID_INSTITUTION=P-XXXXXXXXXXXXXXXXXXXX
-PAYPAL_PLAN_ID_ENTERPRISE=P-XXXXXXXXXXXXXXXXXXXX
 ```
+
+### Plan mapping — external_paypal_plan_id
+
+Each paid plan has an `external_paypal_plan_id` column in `subscription_plans`. This stores
+the PayPal billing plan ID (e.g. `P-XXXXXXXXXXXXXXXXXX`) created in the PayPal dashboard
+or Catalog API.
+
+**If a paid plan has no `external_paypal_plan_id`, checkout returns HTTP 422** —
+"PayPal checkout is not configured for this plan yet." The plan button on the billing page
+also shows "Checkout not configured for this plan yet." in place of the PayPal button.
+
+To set the PayPal plan ID for a plan (requires direct DB access or an admin endpoint):
+```sql
+UPDATE subscription_plans SET external_paypal_plan_id = 'P-XXXXXXXXXXXXXXXXXX'
+WHERE code = 'pro';
+```
+
+The internal `plan_code` (e.g. "pro") is **never sent to PayPal** — only `external_paypal_plan_id`
+is used in the PayPal subscription creation request.
 
 ### PayPal sandbox setup
 
 1. Create a sandbox app at https://developer.paypal.com/developer/applications
 2. Copy `Client ID` and `Secret` to `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET`
-3. Create billing plans in the PayPal Catalog API (or sandbox dashboard) and set `PAYPAL_PLAN_ID_*`
-4. Set up a webhook listener (e.g. via `ngrok`) and register the endpoint URL in PayPal developer portal
-5. Copy the Webhook ID to `PAYPAL_WEBHOOK_ID`
+3. Create billing plans in the PayPal Catalog API (see PayPal docs) — note the `P-...` plan ID
+4. Set `external_paypal_plan_id` on each paid plan in the database (see above)
+5. Set up a webhook listener via `ngrok`: `ngrok http 8000`
+6. Register `https://<ngrok-id>.ngrok.io/api/billing/webhooks/paypal` in PayPal developer portal
+7. Copy the Webhook ID to `PAYPAL_WEBHOOK_ID`
+
+### Sandbox test checklist
+
+- [ ] `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` set from sandbox app
+- [ ] `PAYPAL_ENV=sandbox`
+- [ ] `PAYPAL_WEBHOOK_ID` set from PayPal developer webhook registration
+- [ ] `external_paypal_plan_id` set on at least one plan (e.g. Pro)
+- [ ] `APP_PUBLIC_URL` points to a reachable URL (e.g. ngrok tunnel for local dev)
+- [ ] `GET /api/billing/plans` returns the plan with `external_paypal_plan_id` populated
+- [ ] `POST /api/billing/checkout/paypal { plan_code: "pro" }` returns `checkout_url`
+- [ ] Browser redirect to `checkout_url` shows PayPal subscription approval page
+- [ ] After approval, PayPal redirects to `{APP_PUBLIC_URL}/billing/success`
+- [ ] PayPal sends `BILLING.SUBSCRIPTION.ACTIVATED` webhook to `POST /api/billing/webhooks/paypal`
+- [ ] `payment_webhook_events` table has a processed row; `user_subscriptions` row updated to `active`
 
 ### Checkout flow
 
 ```
 POST /api/billing/checkout/paypal   { plan_code: "pro" }
+  → validates: PayPal configured, plan active, plan paid, external_paypal_plan_id set
+  → calls PayPal /v1/billing/subscriptions with external_paypal_plan_id (not plan code)
   → returns { checkout_url, external_subscription_id, status, provider }
+  → records billing_checkout_started usage event (only on success)
   → Frontend redirects user to checkout_url (PayPal approval page)
-  → User approves → PayPal POSTs BILLING.SUBSCRIPTION.ACTIVATED webhook
-  → Subscription activated via webhook only (never from the return URL)
+  → User approves → PayPal redirects to {APP_PUBLIC_URL}/billing/success
+  → PayPal POSTs BILLING.SUBSCRIPTION.ACTIVATED webhook (source of truth)
+  → Webhook activates UserSubscription — never the return URL
 ```
 
 Missing credentials → HTTP 503 "PayPal checkout is not configured yet."
+Missing `external_paypal_plan_id` → HTTP 422 "PayPal checkout is not configured for this plan yet."
+
+### Success and cancel pages
+
+| URL | Behaviour |
+|-----|-----------|
+| `/billing/success` | Shows "Payment received by PayPal. Subscription activates once confirmed." Fetches current subscription status. Does NOT activate the plan itself. |
+| `/billing/cancel` | Shows "Checkout cancelled. No payment taken." Links back to `/billing`. |
 
 ### Webhook endpoint
 
@@ -536,9 +577,12 @@ POST /api/billing/webhooks/paypal   (no auth required — verified by PayPal sig
 ```
 
 - Verifies signature via `/v1/notifications/verify-webhook-signature` (unless `PAYPAL_SKIP_WEBHOOK_VERIFY=true`)
+- `PAYPAL_SKIP_WEBHOOK_VERIFY` must only be `true` in dev/test. Production rejects without valid signature.
+- Missing `PAYPAL_WEBHOOK_ID` → rejected (fail-closed)
 - Idempotent: duplicate events return `{ status: "already_processed" }`
-- Resolves user via `external_subscription_id` or `custom_id` (set at checkout)
+- Resolves subscription via `external_subscription_id`, then falls back to `custom_id` (user UUID set at checkout)
 - Unresolvable events stored with `processed_status="unresolved"` — no crash
+- Raw webhook body is never stored; only a safe `payload_summary` is persisted
 
 | PayPal event | Subscription status |
 |---|---|
@@ -546,12 +590,13 @@ POST /api/billing/webhooks/paypal   (no auth required — verified by PayPal sig
 | `BILLING.SUBSCRIPTION.CANCELLED` | `canceled` |
 | `BILLING.SUBSCRIPTION.SUSPENDED` | `past_due` |
 | `BILLING.SUBSCRIPTION.EXPIRED` | `expired` |
+| `BILLING.SUBSCRIPTION.PAYMENT.FAILED` | `past_due` |
 
 ### Provider abstraction
 
 `backend/app/services/payment_providers/`:
 - `base.py` — `PaymentProviderBase` ABC, `CheckoutResult`, `WebhookVerifyResult`
-- `paypal.py` — `PayPalProvider` (httpx-based, async)
+- `paypal.py` — `PayPalProvider` (httpx-based, async); `create_subscription` requires explicit `paypal_plan_id`
 - `registry.py` — `get_paypal_provider()` factory (lru_cached, reads from Settings)
 
 ### Running PayPal tests
@@ -561,7 +606,7 @@ cd backend
 pytest tests/test_paypal.py -v
 ```
 
-24 tests — no real PayPal credentials required. All HTTP calls are mocked.
+32 tests — no real PayPal credentials required. All HTTP calls are mocked.
 
 ### Payment integrations excluded
 

@@ -241,6 +241,26 @@ Goal: Wire PayPal as the live checkout provider behind a clean abstraction layer
 - [x] TypeScript check: zero errors
 - [x] DEVELOPMENT.md updated with PayPal env vars, sandbox setup, checkout/webhook flow, provider abstraction docs, excluded integrations note
 
+## PayPal Sandbox Verification Gate — Pre-Live Payment Readiness (Complete)
+
+Goal: Harden PayPal integration for real sandbox credential testing. Correct plan ID mapping, remove Orders v2 fallback, add success/cancel pages, add PAYMENT.FAILED event, enforce external_paypal_plan_id.
+
+- [x] `external_paypal_plan_id` column added to `SubscriptionPlan` model — stores the PayPal billing plan ID (P-xxx); nullable; none means checkout unavailable for that plan
+- [x] Alembic migration `010` — adds `external_paypal_plan_id` to `subscription_plans`
+- [x] `SubscriptionPlanRead` schema exposes `external_paypal_plan_id` to frontend
+- [x] `PayPalProvider.create_subscription` — now accepts explicit `paypal_plan_id` parameter; removed env-var lookup; removed Orders v2 fallback; added `brand_name` and `shipping_preference=NO_SHIPPING` to `application_context`
+- [x] Checkout endpoint — rejects paid plans with no `external_paypal_plan_id` (HTTP 422); passes DB field (not internal code) to PayPal; return/cancel URLs now point to `/billing/success` and `/billing/cancel`
+- [x] `BILLING.SUBSCRIPTION.PAYMENT.FAILED` → `past_due` added to event map
+- [x] Dead code removed from webhook handler (incomplete `if free_plan: pass` branch)
+- [x] `PayPalSuccessPage` (`/billing/success`) — "Payment received. Subscription activates once confirmed." Fetches current subscription status. Never activates plan client-side.
+- [x] `PayPalCancelPage` (`/billing/cancel`) — "Checkout cancelled. No payment taken." Links back to billing.
+- [x] App.tsx routes added for `/billing/success` and `/billing/cancel`
+- [x] `BillingPage` — PayPal button only shown when `external_paypal_plan_id` is set; otherwise shows "Checkout not configured for this plan yet."
+- [x] 8 new backend tests — plan missing PayPal ID → 422; `paypal_plan_id` passed (not code); return/cancel URLs correct; PAYMENT.FAILED → past_due; malformed payload → 400; production verification fail-closed; plans API exposes field
+- [x] Full suite: **352/352** backend tests passing
+- [x] TypeScript check: zero errors
+- [x] DEVELOPMENT.md: sandbox test checklist, `external_paypal_plan_id` configuration guide, success/cancel URL docs, webhook event table updated
+
 ## Phase 2 — Users & Auth (continued)
 
 Goal: Full user-facing auth and profile features.

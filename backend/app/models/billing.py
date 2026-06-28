@@ -55,6 +55,10 @@ class SubscriptionPlan(Base):
     max_training_sessions_per_month: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     max_published_content_access_per_month: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
+    # PayPal billing plan ID (set by admin via dashboard or Catalog API).
+    # If None, PayPal checkout is not available for this plan.
+    external_paypal_plan_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
     # Feature flags
     allows_admin_governance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     allows_bulk_import: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
