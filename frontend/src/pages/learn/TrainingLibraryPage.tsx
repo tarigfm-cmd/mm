@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import {
   MagnifyingGlassIcon,
@@ -82,8 +82,9 @@ function ContentCard({ item, region }: { item: LearnableContentItem; region: str
 }
 
 export default function TrainingLibraryPage() {
+  const [searchParams] = useSearchParams()
   const [region, setRegion] = useState<string>('UK')
-  const [contentType, setContentType] = useState('')
+  const [contentType, setContentType] = useState(searchParams.get('content_type') ?? '')
   const [difficulty, setDifficulty] = useState('')
   const [domain, setDomain] = useState('')
   const [search, setSearch] = useState('')

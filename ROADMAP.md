@@ -182,6 +182,19 @@ Goal: Close the loop from published content to learner training and tracked prog
 - [x] TypeScript check: zero errors
 - [x] CONTENT_GOVERNANCE.md, DEVELOPMENT.md, ROADMAP.md updated
 
+## End-to-End Product Readiness Gate — Pre-Subscription / Pre-AI (Complete)
+
+Goal: Audit and harden the full product flow before building subscriptions, payments, or AI tutor. No new features — only correctness and completeness.
+
+- [x] Auth journey verified: register → auto-login → /learn/content; login preserves return URL; page reload restores auth from refresh token; logout revokes server-side token; protected routes redirect with return URL; admin governance routes block non-admin users; profile update works; no tokens in logs or URL
+- [x] Admin governance journey verified: dashboard uses real summary data; import center gates commit behind zero-error preview; region rules page uses live backend data; content library supports search and external_id display; governance 403 errors are displayed with permission hint; all governance writes require explicit confirmation
+- [x] Learner journey verified: training library handles empty state; training detail handles loading/404/flow-failure/start-failure/submit-failure/score-null/all-not_assessable; progress page handles zero sessions and null scores; profile edit handles validation errors
+- [x] **Fixed:** `TrainingLibraryPage` now reads `?content_type` URL param on mount — "Train now" CTA from progress page now correctly pre-filters the library
+- [x] `scripts/dev_seed_published_content.py` — idempotent dev seed script; creates one non-clinical demonstration drill item, published to UK; creates superuser if missing; refuses to run against production hosts; safe to run multiple times
+- [x] `DEVELOPMENT.md` — full local E2E journey guide (seed script, admin steps, learner steps, manual publish alternative)
+- [x] TypeScript check: zero errors
+- [x] Backend tests: 298/298 passing (no backend changes required)
+
 ## Phase 2 — Users & Auth (continued)
 
 Goal: Full user-facing auth and profile features.

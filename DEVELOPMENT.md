@@ -194,6 +194,75 @@ In development the app auto-creates tables via `Base.metadata.create_all` on sta
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for module boundary conventions.
 
+## Full Local E2E Journey
+
+This section describes how to exercise both the admin and learner journeys end-to-end in a local development environment.
+
+### Prerequisites
+
+1. Start the stack: `docker-compose up`
+2. Verify the API is up: `curl http://localhost:8000/api/health`
+3. App should be at `http://localhost:5173`
+
+### Step 1 — Seed published content (dev only)
+
+A fresh database has no published content. Without published content, the learner Training Library is empty.
+
+```bash
+# From repo root — requires the Docker Compose backend to be running:
+python scripts/dev_seed_published_content.py
+```
+
+This creates:
+- One superuser: `dev-admin@pharmlearn.dev` / `DevAdmin1!`
+- One drill content item (non-clinical dose conversion framework question) published to UK
+
+The script is **idempotent** — safe to run multiple times. It refuses to run against production database hosts.
+
+### Step 2 — Admin journey
+
+1. Open `http://localhost:5173/login`
+2. Sign in as `dev-admin@pharmlearn.dev` / `DevAdmin1!`
+3. Click **Governance** (shown only to superusers)
+4. **Dashboard** — stat cards show total/pending/approved/published counts
+5. **Import Package** — upload a CSV or ZIP preview → commit → see import history
+6. **Approval Batches** — create a batch, set team name and regions
+7. **Content Library** — search by title/external ID, filter by status/type
+8. **Content Detail** — view versions, submit clinical review, publish/unpublish per region
+9. **Evidence Sources** — add and update evidence records; overdue items appear in amber alert
+10. **Region Rules** — CRUD for publishing requirements per region
+
+To publish imported content:
+1. Import Center → preview CSV/ZIP → commit → content lands in `pending_review`
+2. Content Library → open item → submit clinical review (decision: Approved)
+3. Content Detail → publish for UK
+4. Content now appears in learner Training Library
+
+### Step 3 — Learner journey
+
+1. Open `http://localhost:5173/register` to create a new account (or sign in if already registered)
+2. After login you land at `http://localhost:5173/learn/content`
+3. Region selector defaults to UK — change to see other regions
+4. Click **Start training** on any item
+5. Step through the guided training flow (briefing → red flags → decision → counseling)
+6. Submit — see score, dimension feedback, and expert answer reveal
+7. Visit `http://localhost:5173/learn/progress` to see cumulative stats
+8. Click **Profile** in the sidebar to update your name/username
+
+### Manual content publish (without seed script)
+
+If you prefer to publish via the UI rather than the seed script:
+
+```
+Register as admin → Governance → Import Package
+→ upload sample CSV (see CONTENT_GOVERNANCE.md for format)
+→ Preview → Commit
+→ Content Library → open item → Clinical Review (Approved)
+→ Publish for UK
+```
+
+Alternatively, use `scripts/preview_content_package.py` to validate a package before importing.
+
 ## Auth Flow
 
 ### Frontend auth pages
