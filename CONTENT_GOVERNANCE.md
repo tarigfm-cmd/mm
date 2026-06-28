@@ -403,13 +403,25 @@ scoring_rubric
 
 These fields appear only in `reveal_summary` within the session submit response (`POST /api/learn/sessions/{id}/submit`). The training engine itself reads them internally for scoring but never echoes them in the response body.
 
+Both `build_training_flow()` (training_engine.py) and `_strip_answer_keys()` (routes/learn.py) use the same `REVEAL_KEYS` frozenset imported from `training_engine.py` — one source of truth prevents drift.
+
+### Pinned-Version Behaviour
+
+When a learner starts a session via `POST /api/learn/content/{id}/sessions`, the session record stores the `content_version_id` of the currently published version at that moment. Subsequent submit calls score against that **pinned version's payload**, regardless of later publication changes:
+
+- If the admin publishes version 2 after a session was started against version 1, the in-flight session continues to score against version 1's expected answers.
+- If the content is unpublished after a session starts, the learner can still submit and receive feedback — the pinned version is loaded directly without re-checking the publication record. The rationale is that penalizing a learner mid-session for an admin action would be unfair.
+- Once a session is submitted, it is permanently `completed` and stores the version_id. Historical scoring is always attributable to the exact payload version in use at submit time.
+
 ## Known Limitations
 
 - **Evidence region enforcement is coarse.** The publish gate checks that *any* active evidence source exists for `required_evidence_region` — it does not verify that the evidence is linked to the specific content item being published.
 - **RegionPublishingRule `required_review_roles`** is stored in JSON but not yet enforced at publish time. The field is reserved for future multi-role review gate logic.
 - **`requires_local_disclaimer` / `requires_protocol_note`** are stored but not injected into the published payload — enforcement is deferred to the content rendering layer.
 - **`analytics.view_org`** requires the path-param `org_id` to be the same org in which the user holds the permission. Cross-org access by a user with the permission in one org but not another is correctly blocked.
-- **Learner attempt scoring is deterministic only.** Exact-match scoring is reliable only when the content payload contains structured answer fields. Open-ended responses (case presentations, OSCE tasks) return `score=null` and require supervisor review.
+- **Learner attempt scoring is deterministic only.** Exact-match scoring is reliable only when the content payload contains structured answer fields (`expected_decision`, `expected_pharmacist_action`, `correct_answer_or_expected_response`). Open-ended responses (OSCE, simulation) return `score=null` and all 8 dimensions as `not_assessable`. Supervisor review is recommended for these types.
+- **Scoring options vs payload mismatch.** The fixed action-select options shown in the training flow (e.g. "Refer to GP", "Treat with OTC product") are not pulled from the payload's `expected_decision`. A perfectly valid payload may have an `expected_decision` that does not match any displayed option, in which case the learner cannot score 100%. Content authors should ensure `expected_decision` matches one of the displayed options for case-type content.
+- **No input on a scoreable dimension → `not_assessable`.** If a learner submits without selecting an action on a step that has `expected_decision` or `expected_pharmacist_action`, that dimension is marked `not_assessable` (not `failed`). This is lenient by design; the guided flow enforces input on `input_required` steps.
 - **`required_review_roles`** stored but not enforced at publish time.
 - **`requires_local_disclaimer` / `requires_protocol_note`** are surfaced to the learner UI as warning banners but are not injected into the content payload itself.
 

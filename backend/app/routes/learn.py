@@ -48,20 +48,13 @@ from app.schemas.learn import (
     TrainingFlowResponse,
     TrainingFlowStep,
 )
-from app.services.training_engine import build_training_flow, score_submission
+from app.services.training_engine import REVEAL_KEYS, build_training_flow, score_submission
 
 router = APIRouter(prefix="/api/learn", tags=["learner"])
 
-# Keys that must never be returned to learners before submission.
-_ANSWER_KEYS = frozenset({
-    "correct_answer_or_expected_response",
-    "expected_decision",
-    "expected_pharmacist_action",
-    "hidden_risk",
-    "failure_mode",
-    "critical_fail",
-    "scoring_rubric",
-})
+# Single source of truth for answer/scoring keys that must never be returned
+# to learners before submission. Imported from training_engine to prevent drift.
+_ANSWER_KEYS = REVEAL_KEYS
 
 
 def _strip_answer_keys(payload: dict | None) -> dict | None:
@@ -772,26 +765,31 @@ async def get_learner_progress(
     weakness_breakdown = dimension_breakdown
 
     # ── Strongest / weakest dimension ─────────────────────────────────────
-    scored_dims = {k: v for k, v in dimension_breakdown.items() if v > 0}
     weakest_dimension: Optional[str] = None
     strongest_dimension: Optional[str] = None
-    if scored_dims:
-        weakest_dimension = max(scored_dims, key=lambda k: scored_dims[k])
-        all_dims_with_scores = {k: dimension_breakdown.get(k, 0.0) for k in dimension_breakdown}
-        strongest_dimension = min(all_dims_with_scores, key=lambda k: all_dims_with_scores[k]) if all_dims_with_scores else None
+    if dimension_breakdown:
+        dims_with_failures = {k: v for k, v in dimension_breakdown.items() if v > 0}
+        if dims_with_failures:
+            weakest_dimension = max(dims_with_failures, key=lambda k: dims_with_failures[k])
+        # Strongest = lowest fail rate across all tracked dimensions (always shown if data exists)
+        strongest_dimension = min(dimension_breakdown, key=lambda k: dimension_breakdown[k])
 
     # ── Recommended next ───────────────────────────────────────────────────
     recommended_next_content_type: Optional[str] = None
     recommended_next_domain: Optional[str] = None
 
-    if weakest_dimension == "triage_or_referral_decision":
-        recommended_next_content_type = "case"
-    elif weakest_dimension == "calculation_accuracy":
-        recommended_next_content_type = "drill"
-    elif weakest_dimension in ("counseling_quality", "documentation_quality"):
-        recommended_next_content_type = "simulation"
-    elif weakest_dimension == "medication_safety":
-        recommended_next_content_type = "prescription_screening"
+    _DIM_TO_TYPE: dict[str, str] = {
+        "triage_or_referral_decision": "case",
+        "red_flag_recognition": "case",
+        "calculation_accuracy": "drill",
+        "counseling_quality": "simulation",
+        "documentation_quality": "simulation",
+        "communication_safety": "simulation",
+        "medication_safety": "prescription_screening",
+        "interaction_detection": "prescription_screening",
+    }
+    if weakest_dimension:
+        recommended_next_content_type = _DIM_TO_TYPE.get(weakest_dimension)
 
     # Recommend domain from weakest recent session
     if completed_sessions > 0:

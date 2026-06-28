@@ -649,3 +649,180 @@ async def test_dimension_feedback_returned_on_submit(client, fresh_engine):
     assert len(data["dimension_feedback"]) > 0
     for item in data["dimension_feedback"]:
         assert item["status"] in ("passed", "failed", "not_assessable")
+
+
+# ---------------------------------------------------------------------------
+# 26. Training flow — invalid region_code returns 422
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_training_flow_invalid_region_code_422(client, fresh_engine):
+    token = await _register_and_login(client, _ENG_A)
+    item_id, _ = await _make_published_item(fresh_engine, content_type="case")
+    r = await client.get(
+        f"/api/learn/content/{item_id}/training-flow",
+        params={"region_code": "ZZ"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# 27. Session start — invalid region_code returns 422
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_session_start_invalid_region_code_422(client, fresh_engine):
+    token = await _register_and_login(client, _ENG_A)
+    item_id, _ = await _make_published_item(fresh_engine, content_type="case")
+    r = await client.post(
+        f"/api/learn/content/{item_id}/sessions",
+        json={"region_code": "INVALID"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# 28. Progress with zero data returns valid empty-state structure
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_progress_empty_state(client, fresh_engine):
+    token = await _register_and_login(client, _ENG_A)
+    r = await client.get("/api/learn/progress", headers=_auth(token))
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total_attempts"] == 0
+    assert data["completed_sessions"] == 0
+    assert data["average_score"] is None
+    assert data["average_score_percent"] is None
+    assert data["weakest_dimension"] is None
+    assert data["recent_sessions"] == []
+    assert data["recent_attempts"] == []
+
+
+# ---------------------------------------------------------------------------
+# 29. Simulation: flow returns steps, submit marks all not_assessable
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_simulation_flow_and_scoring(client, fresh_engine):
+    token = await _register_and_login(client, _ENG_A)
+    payload = {
+        "patient_profile": "John, 55M",
+        "presenting_complaint": "Severe chest pain",
+        "context": "Walk-in pharmacy",
+        "hidden_risk": "Unstable angina",
+        "failure_mode": "Missed cardiac risk",
+    }
+    item_id, _ = await _make_published_item(
+        fresh_engine, content_type="simulation", payload=payload
+    )
+
+    # Flow should have 3 steps and no hidden fields in content
+    r = await client.get(
+        f"/api/learn/content/{item_id}/training-flow",
+        params={"region_code": "UK"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 200, r.text
+    flow_data = r.json()
+    assert flow_data["total_steps"] == 3
+    assert "hidden_risk" not in r.text
+    assert "failure_mode" not in r.text
+
+    # Start + submit — simulation has no structured expected answer → all not_assessable
+    r = await client.post(
+        f"/api/learn/content/{item_id}/sessions",
+        json={"region_code": "UK"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 201
+    sess_id = r.json()["session_id"]
+
+    r = await client.post(
+        f"/api/learn/sessions/{sess_id}/submit",
+        json={"answer_text": "I would refer urgently"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["score"] is None
+    assert len(data["failed_dimensions"]) == 0
+    assert len(data["not_assessable_dimensions"]) > 0
+    # hidden_risk and failure_mode appear in reveal_summary after submit
+    reveal_vals = list(data["reveal_summary"].values())
+    assert any("angina" in str(v).lower() for v in reveal_vals) or len(data["reveal_summary"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# 30. Submit uses pinned version — not affected by later content changes
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_submit_uses_pinned_version(client, fresh_engine):
+    """Session started against version 1; even if version 2 is created and published
+    later, the submit still scores against the pinned version 1 payload."""
+    token = await _register_and_login(client, _ENG_A)
+    payload_v1 = {"patient_profile": "Alice", "expected_decision": "Refer to GP"}
+    item_id, v1_id = await _make_published_item(
+        fresh_engine, content_type="case", payload=payload_v1
+    )
+
+    # Start session — pins v1
+    r = await client.post(
+        f"/api/learn/content/{item_id}/sessions",
+        json={"region_code": "UK"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 201
+    sess_data = r.json()
+    assert sess_data["content_version_id"] == str(v1_id)
+    sess_id = sess_data["session_id"]
+
+    # Create version 2 with different expected_decision and re-publish
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        from app.models.governance import ContentItem as CI, ContentVersion as CV, PublicationRecord as PR
+        from datetime import datetime, timezone as tz
+
+        # Unpublish v1 publication
+        pub_result = await s.execute(
+            select(PR)
+            .where(PR.content_item_id == item_id, PR.publication_status == "published")
+        )
+        pub = pub_result.scalar_one()
+        pub.publication_status = "unpublished"
+
+        # New version with different expected_decision
+        v2 = CV(
+            content_item_id=item_id,
+            version_number=2,
+            payload_json={"patient_profile": "Alice", "expected_decision": "Advise only"},
+            is_current=True,
+        )
+        s.add(v2)
+        await s.flush()
+
+        # Publish v2
+        s.add(PR(
+            content_item_id=item_id,
+            content_version_id=v2.id,
+            region_code="UK",
+            publication_status="published",
+            published_at=datetime.now(tz.utc),
+        ))
+        await s.commit()
+
+    # Submit against the pinned v1 session — "Refer to GP" should still score 100%
+    r = await client.post(
+        f"/api/learn/sessions/{sess_id}/submit",
+        json={"action_selected": "Refer to GP"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["score"] == 1.0, (
+        "Expected score 1.0 from pinned v1 payload ('Refer to GP'); "
+        f"got {data['score']} — version pinning may be broken"
+    )

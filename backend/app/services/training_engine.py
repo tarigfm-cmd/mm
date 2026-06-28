@@ -261,8 +261,8 @@ def score_submission(
         next_recommendation = f"Focus on: {', '.join(labels)}."
     elif not scoreable:
         next_recommendation = (
-            "Guided training recorded. Automated scoring is not available for this "
-            "content type — supervisor review is recommended."
+            "Guided training recorded — no decisions were submitted for automated scoring. "
+            "Complete all steps to receive a score, or request supervisor review."
         )
     else:
         next_recommendation = "Complete more items to build your weakness profile."
