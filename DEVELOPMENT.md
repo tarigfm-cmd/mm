@@ -208,7 +208,7 @@ The content governance section lives at `/admin/governance` and is guarded by `i
 | `/admin/governance/content` | ContentLibraryPage (paginated table with filters) |
 | `/admin/governance/content/:id` | ContentDetailPage (item detail, versions, reviews, publish) |
 | `/admin/governance/evidence` | EvidenceManagementPage (evidence sources, due-for-review alert) |
-| `/admin/governance/regions` | RegionRulesPage (read-only; management endpoints not yet exposed) |
+| `/admin/governance/regions` | RegionRulesPage (live CRUD for RegionPublishingRule records) |
 
 ### Access control
 
@@ -220,6 +220,15 @@ Backend RBAC enforces the same constraint on every API call — the frontend gat
 
 `frontend/src/services/governanceApi.ts` — separate Axios instance with the same JWT refresh interceptor pattern as `api.ts`. All import endpoints are multipart/form-data with extended timeouts (preview 300 s, commit 600 s).
 
+API objects exported:
+- `importApi` — preview and commit multipart uploads
+- `approvalBatchApi` — list and create approval batches
+- `contentApi` — list (with `search`, `status`, `content_type`, `domain` filters), get, create, versions, reviews, publish, unpublish
+- `evidenceApi` — list, create, update, dueForReview
+- `governanceSummaryApi` — single aggregate call for the dashboard stat cards
+- `importBatchApi` — list and get import batch metadata (no clinical payloads)
+- `regionRulesApi` — list, create, update region publishing rules
+
 ### Import rules (enforced in UI + backend)
 
 - Only CSV or ZIP content packages may be uploaded. The Excel dashboard must NOT be uploaded here.
@@ -227,3 +236,14 @@ Backend RBAC enforces the same constraint on every API call — the frontend gat
 - All committed items land in `pending_review`; nothing is auto-published.
 - Commit requires explicit confirmation via `ConfirmActionDialog`.
 - Publish and Unpublish actions each require explicit per-region confirmation.
+
+### Frontend TypeScript checks
+
+Run after any frontend change:
+
+```bash
+cd frontend
+npx tsc --noEmit
+```
+
+All governance pages and API client are fully typed. `ContentItemListItem` includes `external_id: string | null`. New types (`GovernanceSummary`, `ImportBatchRead`, `ImportBatchListResponse`, `RegionPublishingRuleRead/Create/Update`) are defined in `frontend/src/types/governance.ts`.

@@ -30,6 +30,7 @@ export default function ContentLibraryPage() {
   const [statusFilter, setStatusFilter] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [domainFilter, setDomainFilter] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
 
   const load = useCallback(async (pg: number) => {
     setLoading(true)
@@ -40,6 +41,7 @@ export default function ContentLibraryPage() {
         status: statusFilter || undefined,
         content_type: typeFilter || undefined,
         domain: domainFilter.trim() || undefined,
+        search: searchQuery.trim() || undefined,
       })
       setItems(res.items)
       setTotal(res.total)
@@ -49,7 +51,7 @@ export default function ContentLibraryPage() {
     } finally {
       setLoading(false)
     }
-  }, [statusFilter, typeFilter, domainFilter])
+  }, [statusFilter, typeFilter, domainFilter, searchQuery])
 
   useEffect(() => {
     setPage(1)
@@ -103,7 +105,17 @@ export default function ContentLibraryPage() {
             value={domainFilter}
             onChange={(e) => setDomainFilter(e.target.value)}
             placeholder="e.g. Respiratory"
-            className="text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 w-40"
+            className="text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 w-36"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Search title / ID</label>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="e.g. Metformin or BNF-MET"
+            className="text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 w-44"
           />
         </div>
         <button
@@ -163,9 +175,8 @@ export default function ContentLibraryPage() {
                   ))
                 : items.map((item) => (
                     <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3 font-mono text-xs text-gray-500 max-w-[100px] truncate">
-                        {/* External ID is on ContentItemRead, not ListItem — show from title context */}
-                        —
+                      <td className="px-4 py-3 font-mono text-xs text-gray-500 max-w-[120px] truncate" title={item.external_id ?? undefined}>
+                        {item.external_id ?? '—'}
                       </td>
                       <td className="px-4 py-3 max-w-[240px]">
                         <p className="text-sm text-gray-900 font-medium truncate" title={item.title}>

@@ -1,12 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import toast from 'react-hot-toast'
 import FileUploadPanel from '@/components/governance/FileUploadPanel'
 import { ImportPreviewPanel, CommitResultPanel } from '@/components/governance/ImportPreviewTable'
 import ConfirmActionDialog from '@/components/governance/ConfirmActionDialog'
-import { importApi, approvalBatchApi } from '@/services/governanceApi'
-import type { PreviewResult, CommitResult, ApprovalBatchRead } from '@/types/governance'
-import { useEffect } from 'react'
-import { InformationCircleIcon } from '@heroicons/react/24/outline'
+import { importApi, approvalBatchApi, importBatchApi } from '@/services/governanceApi'
+import type { PreviewResult, CommitResult, ApprovalBatchRead, ImportBatchRead } from '@/types/governance'
+import { InformationCircleIcon, ClockIcon } from '@heroicons/react/24/outline'
 
 type Step = 'upload' | 'previewing' | 'preview_done' | 'committing' | 'committed'
 
@@ -16,12 +15,18 @@ export default function ImportCenter() {
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null)
   const [commitResult, setCommitResult] = useState<CommitResult | null>(null)
   const [approvalBatches, setApprovalBatches] = useState<ApprovalBatchRead[]>([])
+  const [recentImports, setRecentImports] = useState<ImportBatchRead[]>([])
   const [selectedBatchId, setSelectedBatchId] = useState<string>('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [committing, setCommitting] = useState(false)
 
+  const refreshHistory = () => {
+    importBatchApi.list(5).then((r) => setRecentImports(r.items)).catch(() => {})
+  }
+
   useEffect(() => {
     approvalBatchApi.list().then(setApprovalBatches).catch(() => {})
+    refreshHistory()
   }, [])
 
   const handleFileChange = (f: File | null) => {
@@ -51,6 +56,7 @@ export default function ImportCenter() {
       const result = await importApi.commit(file, selectedBatchId || undefined)
       setCommitResult(result)
       setStep('committed')
+      refreshHistory()
       toast.success(`Import committed: ${result.created_items} items created.`)
     } catch {
       toast.error('Commit failed. See the error for details.')
@@ -197,6 +203,41 @@ export default function ImportCenter() {
         >
           Import another package
         </button>
+      )}
+
+      {/* Recent import history */}
+      {recentImports.length > 0 && (
+        <section>
+          <div className="flex items-center gap-2 mb-3">
+            <ClockIcon className="w-4 h-4 text-gray-400" />
+            <h2 className="text-sm font-semibold text-gray-700">Recent imports</h2>
+          </div>
+          <div className="space-y-2">
+            {recentImports.map((imp) => (
+              <div
+                key={imp.id}
+                className="flex items-center justify-between px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm"
+              >
+                <div className="min-w-0">
+                  <p className="font-mono text-xs text-gray-700 truncate">{imp.source_file_name}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {imp.created_items.toLocaleString()} items · {imp.skipped_duplicates} skipped ·{' '}
+                    {imp.package_type.toUpperCase()} · {new Date(imp.created_at).toLocaleString()}
+                  </p>
+                </div>
+                <span
+                  className={`ml-3 flex-shrink-0 text-xs font-medium px-2 py-1 rounded-full ${
+                    imp.status === 'committed'
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-gray-100 text-gray-600'
+                  }`}
+                >
+                  {imp.status}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       {/* Confirm dialog */}

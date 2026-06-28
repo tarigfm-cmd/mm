@@ -75,6 +75,7 @@ class ContentItemListItem(BaseModel):
     difficulty: Optional[str]
     status: str
     region_scope: Optional[list[str]]
+    external_id: Optional[str]
     current_version_id: Optional[uuid.UUID]
     created_at: datetime
     updated_at: datetime
@@ -394,3 +395,131 @@ class OrgWeaknessMap(BaseModel):
     failure_rates: dict[str, float]
     weak_domains: list[str]
     total_attempts: int
+
+
+# ---------------------------------------------------------------------------
+# GovernanceSummary
+# ---------------------------------------------------------------------------
+
+
+class GovernanceSummary(BaseModel):
+    total_items: int
+    by_status: dict[str, int]
+    by_content_type: dict[str, int]
+    evidence_due_count: int
+    published_by_region: dict[str, int]
+
+
+# ---------------------------------------------------------------------------
+# ImportBatch
+# ---------------------------------------------------------------------------
+
+
+class ImportBatchRead(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    source_file_name: str
+    package_type: str
+    status: str
+    total_rows: int
+    valid_rows: int
+    invalid_rows: int
+    created_items: int
+    created_versions: int
+    created_evidence_sources: int
+    created_region_rules: int
+    skipped_duplicates: int
+    approval_batch_id: Optional[uuid.UUID]
+    uploaded_by_user_id: Optional[uuid.UUID]
+    created_at: datetime
+    committed_at: Optional[datetime]
+
+
+class ImportBatchListResponse(BaseModel):
+    items: list[ImportBatchRead]
+    total: int
+
+
+# ---------------------------------------------------------------------------
+# RegionPublishingRule
+# ---------------------------------------------------------------------------
+
+
+class RegionPublishingRuleRead(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    region_code: str
+    content_type: Optional[str]
+    domain: Optional[str]
+    allowed_statuses: Optional[list[str]]
+    required_review_roles: Optional[list[str]]
+    required_evidence_region: Optional[str]
+    requires_local_disclaimer: bool
+    requires_protocol_note: bool
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class RegionPublishingRuleCreate(BaseModel):
+    region_code: str
+    content_type: Optional[str] = None
+    domain: Optional[str] = None
+    allowed_statuses: Optional[list[str]] = None
+    required_review_roles: Optional[list[str]] = None
+    required_evidence_region: Optional[str] = None
+    requires_local_disclaimer: bool = False
+    requires_protocol_note: bool = False
+    is_active: bool = True
+
+    @field_validator("region_code", mode="before")
+    @classmethod
+    def valid_region_code(cls, v: str) -> str:
+        if v not in REGION_CODES:
+            raise ValueError(f"region_code must be one of: {sorted(REGION_CODES)}")
+        return v
+
+    @field_validator("content_type", mode="before")
+    @classmethod
+    def valid_content_type(cls, v: str | None) -> str | None:
+        if v is not None and v not in CONTENT_TYPES:
+            raise ValueError(f"content_type must be one of: {', '.join(sorted(CONTENT_TYPES))}")
+        return v
+
+    @field_validator("allowed_statuses", mode="before")
+    @classmethod
+    def valid_allowed_statuses(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            bad = [s for s in v if s not in CONTENT_STATUSES]
+            if bad:
+                raise ValueError(f"Invalid statuses: {bad}. Must be in {sorted(CONTENT_STATUSES)}")
+        return v
+
+
+class RegionPublishingRuleUpdate(BaseModel):
+    content_type: Optional[str] = None
+    domain: Optional[str] = None
+    allowed_statuses: Optional[list[str]] = None
+    required_review_roles: Optional[list[str]] = None
+    required_evidence_region: Optional[str] = None
+    requires_local_disclaimer: Optional[bool] = None
+    requires_protocol_note: Optional[bool] = None
+    is_active: Optional[bool] = None
+
+    @field_validator("content_type", mode="before")
+    @classmethod
+    def valid_content_type(cls, v: str | None) -> str | None:
+        if v is not None and v not in CONTENT_TYPES:
+            raise ValueError(f"content_type must be one of: {', '.join(sorted(CONTENT_TYPES))}")
+        return v
+
+    @field_validator("allowed_statuses", mode="before")
+    @classmethod
+    def valid_allowed_statuses(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            bad = [s for s in v if s not in CONTENT_STATUSES]
+            if bad:
+                raise ValueError(f"Invalid statuses: {bad}. Must be in {sorted(CONTENT_STATUSES)}")
+        return v

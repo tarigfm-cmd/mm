@@ -48,6 +48,7 @@ export interface ContentItemListItem {
   difficulty: string | null
   status: string
   region_scope: string[] | null
+  external_id: string | null
   current_version_id: string | null
   created_at: string
   updated_at: string
@@ -276,4 +277,80 @@ export interface CommitResult {
   warnings: string[]
   approval_batch_id: string | null
   row_errors: RowError[]
+}
+
+// ── Governance Summary ─────────────────────────────────────────────────────
+
+export interface GovernanceSummary {
+  total_items: number
+  by_status: Record<string, number>
+  by_content_type: Record<string, number>
+  evidence_due_count: number
+  published_by_region: Record<string, number>
+}
+
+// ── Import Batches ─────────────────────────────────────────────────────────
+
+export interface ImportBatchRead {
+  id: string
+  source_file_name: string
+  package_type: string
+  status: string
+  total_rows: number
+  valid_rows: number
+  invalid_rows: number
+  created_items: number
+  created_versions: number
+  created_evidence_sources: number
+  created_region_rules: number
+  skipped_duplicates: number
+  approval_batch_id: string | null
+  uploaded_by_user_id: string | null
+  created_at: string
+  committed_at: string | null
+}
+
+export interface ImportBatchListResponse {
+  items: ImportBatchRead[]
+  total: number
+}
+
+// ── Region Publishing Rules ────────────────────────────────────────────────
+
+export interface RegionPublishingRuleRead {
+  id: string
+  region_code: string
+  content_type: string | null
+  domain: string | null
+  allowed_statuses: string[] | null
+  required_review_roles: string[] | null
+  required_evidence_region: string | null
+  requires_local_disclaimer: boolean
+  requires_protocol_note: boolean
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface RegionPublishingRuleCreate {
+  region_code: string
+  content_type?: string
+  domain?: string
+  allowed_statuses?: string[]
+  required_review_roles?: string[]
+  required_evidence_region?: string
+  requires_local_disclaimer?: boolean
+  requires_protocol_note?: boolean
+  is_active?: boolean
+}
+
+export interface RegionPublishingRuleUpdate {
+  content_type?: string
+  domain?: string
+  allowed_statuses?: string[]
+  required_review_roles?: string[]
+  required_evidence_region?: string
+  requires_local_disclaimer?: boolean
+  requires_protocol_note?: boolean
+  is_active?: boolean
 }

@@ -25,6 +25,7 @@ from app.models.governance import (
     ContentItem,
     ContentVersion,
     EvidenceSource,
+    ImportBatch,
     PublicationRecord,
     RegionPublishingRule,
 )
@@ -42,8 +43,14 @@ from app.schemas.governance import (
     ContentItemRead,
     ContentVersionCreate,
     ContentVersionRead,
+    GovernanceSummary,
+    ImportBatchListResponse,
+    ImportBatchRead,
     PublicationRecordRead,
     PublishRequest,
+    RegionPublishingRuleCreate,
+    RegionPublishingRuleRead,
+    RegionPublishingRuleUpdate,
     UnpublishRequest,
 )
 from app.services.audit import log_action
@@ -213,6 +220,7 @@ async def list_content_items(
     content_type: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     domain: Optional[str] = Query(None),
+    search: Optional[str] = Query(None, max_length=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -232,6 +240,14 @@ async def list_content_items(
         q = q.where(ContentItem.content_type == content_type)
     if domain:
         q = q.where(ContentItem.domain == domain)
+    if search:
+        term = f"%{search.strip()}%"
+        q = q.where(
+            or_(
+                ContentItem.title.ilike(term),
+                ContentItem.external_id.ilike(term),
+            )
+        )
 
     count_result = await db.execute(select(func.count()).select_from(q.subquery()))
     total = count_result.scalar_one()
@@ -711,3 +727,179 @@ async def import_commit(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Governance Summary
+# ---------------------------------------------------------------------------
+
+
+@router.get("/governance-summary", response_model=GovernanceSummary)
+async def governance_summary(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_permission("content.review")),
+):
+    """Single-query aggregate dashboard: status counts, type counts, evidence due, published by region."""
+    from datetime import datetime, timezone
+    from sqlalchemy import case
+
+    now = datetime.now(timezone.utc)
+
+    # Count items by status
+    status_rows = (
+        await db.execute(
+            select(ContentItem.status, func.count(ContentItem.id).label("n"))
+            .group_by(ContentItem.status)
+        )
+    ).all()
+    by_status = {row.status: row.n for row in status_rows}
+    total_items = sum(by_status.values())
+
+    # Count items by content_type
+    type_rows = (
+        await db.execute(
+            select(ContentItem.content_type, func.count(ContentItem.id).label("n"))
+            .group_by(ContentItem.content_type)
+        )
+    ).all()
+    by_content_type = {row.content_type: row.n for row in type_rows}
+
+    # Evidence due for review
+    evidence_due_count = await db.scalar(
+        select(func.count(EvidenceSource.id)).where(
+            EvidenceSource.next_review_due_at <= now,
+            EvidenceSource.evidence_status.notin_(["retired", "superseded"]),
+        )
+    ) or 0
+
+    # Published by region (active publication records)
+    region_rows = (
+        await db.execute(
+            select(PublicationRecord.region_code, func.count(PublicationRecord.id).label("n"))
+            .where(PublicationRecord.publication_status == "published")
+            .group_by(PublicationRecord.region_code)
+        )
+    ).all()
+    published_by_region = {row.region_code: row.n for row in region_rows}
+
+    return GovernanceSummary(
+        total_items=total_items,
+        by_status=by_status,
+        by_content_type=by_content_type,
+        evidence_due_count=evidence_due_count,
+        published_by_region=published_by_region,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Import Batch visibility
+# ---------------------------------------------------------------------------
+
+
+@router.get("/import/batches", response_model=ImportBatchListResponse)
+async def list_import_batches(
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_permission("content.import")),
+):
+    """List recent import batches (safe metadata only, no clinical payloads)."""
+    rows = (
+        await db.execute(
+            select(ImportBatch).order_by(ImportBatch.created_at.desc()).limit(limit)
+        )
+    ).scalars().all()
+    total = await db.scalar(select(func.count(ImportBatch.id))) or 0
+    return ImportBatchListResponse(
+        items=[ImportBatchRead.model_validate(r) for r in rows],
+        total=total,
+    )
+
+
+@router.get("/import/batches/{batch_id}", response_model=ImportBatchRead)
+async def get_import_batch(
+    batch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_permission("content.import")),
+):
+    """Get a single import batch by ID (safe metadata only)."""
+    row = await db.get(ImportBatch, batch_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Import batch not found")
+    return row
+
+
+# ---------------------------------------------------------------------------
+# Region Publishing Rules
+# ---------------------------------------------------------------------------
+
+
+@router.get("/region-rules", response_model=list[RegionPublishingRuleRead])
+async def list_region_rules(
+    region_code: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_permission("content.review")),
+):
+    q = select(RegionPublishingRule).order_by(
+        RegionPublishingRule.region_code, RegionPublishingRule.content_type
+    )
+    if region_code:
+        q = q.where(RegionPublishingRule.region_code == region_code)
+    result = await db.execute(q)
+    return result.scalars().all()
+
+
+@router.post(
+    "/region-rules",
+    response_model=RegionPublishingRuleRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_region_rule(
+    body: RegionPublishingRuleCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_permission("content.publish")),
+):
+    rule = RegionPublishingRule(**body.model_dump())
+    db.add(rule)
+    await db.flush()
+    await log_action(
+        db,
+        action="content.region_rule_created",
+        actor_user_id=current_user.id,
+        resource_type="region_publishing_rule",
+        resource_id=str(rule.id),
+        details={"region_code": rule.region_code, "content_type": rule.content_type},
+        ip_address=request.client.host if request.client else None,
+    )
+    await db.commit()
+    await db.refresh(rule)
+    return rule
+
+
+@router.patch("/region-rules/{rule_id}", response_model=RegionPublishingRuleRead)
+async def update_region_rule(
+    rule_id: uuid.UUID,
+    body: RegionPublishingRuleUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_permission("content.publish")),
+):
+    rule = await db.get(RegionPublishingRule, rule_id)
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Region rule not found")
+    update_data = body.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(rule, field, value)
+    await db.flush()
+    await log_action(
+        db,
+        action="content.region_rule_updated",
+        actor_user_id=current_user.id,
+        resource_type="region_publishing_rule",
+        resource_id=str(rule_id),
+        details={"updated_fields": list(update_data.keys())},
+        ip_address=request.client.host if request.client else None,
+    )
+    await db.commit()
+    await db.refresh(rule)
+    return rule

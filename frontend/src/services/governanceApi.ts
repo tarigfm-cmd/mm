@@ -19,8 +19,14 @@ import type {
   EvidenceSourceCreate,
   EvidenceSourceRead,
   EvidenceSourceUpdate,
+  GovernanceSummary,
+  ImportBatchListResponse,
+  ImportBatchRead,
   PreviewResult,
   PublicationRecordRead,
+  RegionPublishingRuleCreate,
+  RegionPublishingRuleRead,
+  RegionPublishingRuleUpdate,
 } from '@/types/governance'
 
 const BASE_URL = ((import.meta as unknown) as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL ?? ''
@@ -135,6 +141,7 @@ export const contentApi = {
     content_type?: string
     status?: string
     domain?: string
+    search?: string
   }): Promise<ContentItemListResponse> => {
     const { data } = await govHttp.get<ContentItemListResponse>('/api/content/items', { params })
     return data
@@ -227,6 +234,55 @@ export const evidenceApi = {
 
   dueForReview: async (): Promise<EvidenceSourceRead[]> => {
     const { data } = await govHttp.get<EvidenceSourceRead[]>('/api/evidence/due-for-review')
+    return data
+  },
+}
+
+// ── Governance Summary ─────────────────────────────────────────────────────
+
+export const governanceSummaryApi = {
+  get: async (): Promise<GovernanceSummary> => {
+    const { data } = await govHttp.get<GovernanceSummary>('/api/content/governance-summary')
+    return data
+  },
+}
+
+// ── Import Batches ─────────────────────────────────────────────────────────
+
+export const importBatchApi = {
+  list: async (limit = 20): Promise<ImportBatchListResponse> => {
+    const { data } = await govHttp.get<ImportBatchListResponse>('/api/content/import/batches', {
+      params: { limit },
+    })
+    return data
+  },
+
+  get: async (id: string): Promise<ImportBatchRead> => {
+    const { data } = await govHttp.get<ImportBatchRead>(`/api/content/import/batches/${id}`)
+    return data
+  },
+}
+
+// ── Region Rules ───────────────────────────────────────────────────────────
+
+export const regionRulesApi = {
+  list: async (regionCode?: string): Promise<RegionPublishingRuleRead[]> => {
+    const { data } = await govHttp.get<RegionPublishingRuleRead[]>('/api/content/region-rules', {
+      params: regionCode ? { region_code: regionCode } : undefined,
+    })
+    return data
+  },
+
+  create: async (body: RegionPublishingRuleCreate): Promise<RegionPublishingRuleRead> => {
+    const { data } = await govHttp.post<RegionPublishingRuleRead>('/api/content/region-rules', body)
+    return data
+  },
+
+  update: async (id: string, body: RegionPublishingRuleUpdate): Promise<RegionPublishingRuleRead> => {
+    const { data } = await govHttp.patch<RegionPublishingRuleRead>(
+      `/api/content/region-rules/${id}`,
+      body,
+    )
     return data
   },
 }

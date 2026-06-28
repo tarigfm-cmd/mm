@@ -174,6 +174,11 @@ Content governance uses **platform-scoped RBAC**: a user needs the required perm
 | View failure hotspots | `analytics.view` |
 | View content failure summary | `analytics.view` |
 | View org weakness map | `analytics.view_org` (org-scoped to the requested `org_id`) |
+| View governance summary | `content.review` |
+| List / view import batches | `content.import` |
+| List region publishing rules | `content.review` |
+| Create region publishing rule | `content.publish` |
+| Update region publishing rule | `content.publish` |
 
 ### Dependency Implementations
 
@@ -187,9 +192,15 @@ Content governance uses **platform-scoped RBAC**: a user needs the required perm
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/content/items` | Create a content item (admin) |
-| `GET` | `/api/content/items` | List items (admins see all; learners see published only) |
+| `GET` | `/api/content/items` | List items (admins see all; learners see published only). Query params: `status`, `content_type`, `domain`, `search` (ILIKE on title/external_id), `page`, `per_page` |
 | `GET` | `/api/content/items/{id}` | Get a single item |
 | `GET` | `/api/content/published?region=UK` | List published items for a region |
+
+### Governance Summary
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/content/governance-summary` | Single aggregate call returning `total_items`, `by_status`, `by_content_type`, `evidence_due_count`, `published_by_region`. Requires `content.review`. Replaces multiple individual list calls on the dashboard. |
 
 ### Content Versions
 
@@ -229,6 +240,13 @@ Content governance uses **platform-scoped RBAC**: a user needs the required perm
 
 Both endpoints accept multipart/form-data with a `file` field (`.csv` or `.zip`).
 `/commit` additionally accepts an optional `approval_batch_id` form field (UUID).
+
+### Import Batches (audit history)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/content/import/batches` | List recent import batch metadata. Query param: `limit` (1–100, default 20). Requires `content.import`. Safe metadata only — no clinical payloads, no raw `warnings_json`/`errors_json`. |
+| `GET` | `/api/content/import/batches/{id}` | Get a single import batch record. Requires `content.import`. 404 if not found. |
 
 #### Supported files
 
@@ -300,6 +318,16 @@ Every write action emits an `AuditLog` record:
 | `content.evidence_source_created` | Evidence source added |
 | `content.evidence_source_updated` | Evidence source fields updated |
 
+### Region Publishing Rules API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/content/region-rules` | List all region publishing rules. Optional `region_code` filter. Requires `content.review`. |
+| `POST` | `/api/content/region-rules` | Create a new rule. Requires `content.publish`. Emits audit log. |
+| `PATCH` | `/api/content/region-rules/{id}` | Update an existing rule (partial). Requires `content.publish`. Emits audit log. 404 if not found. |
+
+Rules created via the API start with `is_active=True` unless explicitly set to `False`. Rules can also be seeded during bulk import (via `localization_rules.csv`); seeded rules default to `is_active=False`.
+
 ## Region Publishing Rules
 
 `RegionPublishingRule` records impose region-specific constraints on publication. When a publish request arrives, the system checks for any **active** rule matching `(region_code, content_type)`. If a matching active rule exists:
@@ -353,7 +381,7 @@ The governance UI lives at `/admin/governance` and is accessible only to `is_sup
    - Batch records the team, timestamp, statement, and optional manifest hash
 
 3. Content Library (/admin/governance/content)
-   - Browse all items with filters: status, content_type, domain
+   - Browse all items with filters: status, content_type, domain, and free-text search (title / external_id)
    - Paginated (20/page); click "View →" to open detail
 
 4. Content Detail (/admin/governance/content/:id)
@@ -371,9 +399,19 @@ The governance UI lives at `/admin/governance` and is accessible only to `is_sup
    - Filter by region and status
    - Add new evidence sources; inline-edit title, status, next review date
 
-6. Regions (/admin/governance/regions)
-   - Read-only view of the four known regions and their regulatory context
-   - Region publishing rule management endpoints are not yet exposed
+6. Region Rules (/admin/governance/regions)
+   - Live view of all `RegionPublishingRule` records loaded from backend
+   - Create new rules: select region, content type, allowed statuses, evidence region, disclaimer flags
+   - Inline edit existing rules: toggle allowed statuses, is_active flag
+   - Deactivate button → ConfirmActionDialog before `PATCH is_active=False`
+   - Import note: rules seeded via `localization_rules.csv` start inactive; activate here after review
+   - Enforcement explanation panel explains what each field gates at publish time
+
+7. Dashboard (/admin/governance)
+   - Single `GET /api/content/governance-summary` call populates all stat cards (total, pending_review, clinically_approved, published)
+   - By-content-type breakdown as flex-wrap chip row
+   - 3-column panel: evidence due for review, recent approval batches, recent imports
+   - Recent imports sourced from `GET /api/content/import/batches?limit=5`
 ```
 
 ### UI safety rules enforced

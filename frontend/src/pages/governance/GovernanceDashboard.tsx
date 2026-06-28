@@ -9,16 +9,8 @@ import {
   ClipboardDocumentListIcon,
 } from '@heroicons/react/24/outline'
 import StatCard from '@/components/governance/StatCard'
-import { contentApi, approvalBatchApi, evidenceApi } from '@/services/governanceApi'
-import type { ApprovalBatchRead, EvidenceSourceRead } from '@/types/governance'
-
-interface StatusCounts {
-  total: number
-  pending_review: number
-  clinically_approved: number
-  published: number
-  needs_update: number
-}
+import { governanceSummaryApi, approvalBatchApi, evidenceApi, importBatchApi } from '@/services/governanceApi'
+import type { ApprovalBatchRead, EvidenceSourceRead, GovernanceSummary, ImportBatchRead } from '@/types/governance'
 
 const QUICK_LINKS = [
   { to: '/admin/governance/import',           label: 'Import Package',       icon: ArrowUpTrayIcon,           desc: 'Upload & preview CSV/ZIP' },
@@ -28,9 +20,10 @@ const QUICK_LINKS = [
 ]
 
 export default function GovernanceDashboard() {
-  const [counts, setCounts] = useState<StatusCounts | null>(null)
+  const [summary, setSummary] = useState<GovernanceSummary | null>(null)
   const [dueEvidence, setDueEvidence] = useState<EvidenceSourceRead[]>([])
   const [recentBatches, setRecentBatches] = useState<ApprovalBatchRead[]>([])
+  const [recentImports, setRecentImports] = useState<ImportBatchRead[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -41,25 +34,17 @@ export default function GovernanceDashboard() {
       setLoading(true)
       setError(null)
       try {
-        const [total, pending, approved, published, needsUpdate, batches, due] = await Promise.all([
-          contentApi.list({ page: 1, per_page: 1 }),
-          contentApi.list({ page: 1, per_page: 1, status: 'pending_review' }),
-          contentApi.list({ page: 1, per_page: 1, status: 'clinically_approved' }),
-          contentApi.list({ page: 1, per_page: 1, status: 'published' }),
-          contentApi.list({ page: 1, per_page: 1, status: 'needs_update' }),
+        const [sum, batches, due, imports] = await Promise.all([
+          governanceSummaryApi.get(),
           approvalBatchApi.list().catch(() => [] as ApprovalBatchRead[]),
           evidenceApi.dueForReview().catch(() => [] as EvidenceSourceRead[]),
+          importBatchApi.list(5).catch(() => ({ items: [] as ImportBatchRead[], total: 0 })),
         ])
         if (!cancelled) {
-          setCounts({
-            total: total.total,
-            pending_review: pending.total,
-            clinically_approved: approved.total,
-            published: published.total,
-            needs_update: needsUpdate.total,
-          })
+          setSummary(sum)
           setRecentBatches(batches.slice(0, 5))
           setDueEvidence(due.slice(0, 5))
+          setRecentImports(imports.items)
         }
       } catch {
         if (!cancelled) setError('Failed to load dashboard data. Check your permissions.')
@@ -71,6 +56,8 @@ export default function GovernanceDashboard() {
     load()
     return () => { cancelled = true }
   }, [])
+
+  const needsUpdate = summary?.by_status?.needs_update ?? 0
 
   return (
     <div className="space-y-8">
@@ -89,39 +76,61 @@ export default function GovernanceDashboard() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             title="Total items"
-            value={loading ? '—' : (counts?.total ?? 0).toLocaleString()}
+            value={loading ? '—' : (summary?.total_items ?? 0).toLocaleString()}
             icon={<ClipboardDocumentListIcon className="w-5 h-5" />}
             accent="blue"
             loading={loading}
           />
           <StatCard
             title="Pending review"
-            value={loading ? '—' : (counts?.pending_review ?? 0).toLocaleString()}
+            value={loading ? '—' : (summary?.by_status?.pending_review ?? 0).toLocaleString()}
             icon={<ExclamationCircleIcon className="w-5 h-5" />}
             accent="amber"
             loading={loading}
           />
           <StatCard
             title="Clinically approved"
-            value={loading ? '—' : (counts?.clinically_approved ?? 0).toLocaleString()}
+            value={loading ? '—' : (summary?.by_status?.clinically_approved ?? 0).toLocaleString()}
             icon={<CheckBadgeIcon className="w-5 h-5" />}
             accent="green"
             loading={loading}
           />
           <StatCard
             title="Published"
-            value={loading ? '—' : (counts?.published ?? 0).toLocaleString()}
+            value={loading ? '—' : (summary?.by_status?.published ?? 0).toLocaleString()}
             icon={<BookOpenIcon className="w-5 h-5" />}
             accent="green"
             loading={loading}
           />
         </div>
-        {!loading && counts && counts.needs_update > 0 && (
+        {!loading && needsUpdate > 0 && (
           <div className="mt-2 text-xs text-orange-600">
-            {counts.needs_update} item{counts.needs_update !== 1 ? 's' : ''} need re-review after version update.
+            {needsUpdate} item{needsUpdate !== 1 ? 's' : ''} need re-review after version update.
           </div>
         )}
       </div>
+
+      {/* Content type breakdown */}
+      {!loading && summary && Object.keys(summary.by_content_type).length > 0 && (
+        <div>
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+            By content type
+          </h2>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(summary.by_content_type)
+              .sort(([, a], [, b]) => b - a)
+              .map(([type, count]) => (
+                <span
+                  key={type}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs text-gray-700"
+                >
+                  <span className="font-mono">{type}</span>
+                  <span className="font-semibold text-gray-900">{count.toLocaleString()}</span>
+                </span>
+              ))}
+          </div>
+        </div>
+      )}
 
       {/* Quick links */}
       <div>
@@ -147,31 +156,26 @@ export default function GovernanceDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Evidence due for review */}
         <div className="bg-white border border-gray-200 rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-semibold text-gray-700">Evidence due for review</h2>
-            <Link
-              to="/admin/governance/evidence"
-              className="text-xs text-primary-600 hover:underline"
-            >
+            <Link to="/admin/governance/evidence" className="text-xs text-primary-600 hover:underline">
               View all
             </Link>
           </div>
           {loading ? (
             <div className="space-y-2">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-8 bg-gray-100 animate-pulse rounded" />
-              ))}
+              {[1, 2, 3].map((i) => <div key={i} className="h-8 bg-gray-100 animate-pulse rounded" />)}
             </div>
           ) : dueEvidence.length === 0 ? (
-            <p className="text-sm text-gray-400">No evidence sources overdue for review.</p>
+            <p className="text-sm text-gray-400">No evidence sources overdue.</p>
           ) : (
             <ul className="space-y-2">
               {dueEvidence.map((ev) => (
                 <li key={ev.id} className="flex items-center justify-between text-sm">
-                  <span className="truncate text-gray-700 max-w-[200px]" title={ev.title}>
+                  <span className="truncate text-gray-700 max-w-[160px]" title={ev.title}>
                     {ev.title}
                   </span>
                   <span className="text-xs text-red-600 flex-shrink-0 ml-2">
@@ -189,18 +193,13 @@ export default function GovernanceDashboard() {
         <div className="bg-white border border-gray-200 rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-semibold text-gray-700">Recent approval batches</h2>
-            <Link
-              to="/admin/governance/approval-batches"
-              className="text-xs text-primary-600 hover:underline"
-            >
+            <Link to="/admin/governance/approval-batches" className="text-xs text-primary-600 hover:underline">
               View all
             </Link>
           </div>
           {loading ? (
             <div className="space-y-2">
-              {[1, 2].map((i) => (
-                <div key={i} className="h-10 bg-gray-100 animate-pulse rounded" />
-              ))}
+              {[1, 2].map((i) => <div key={i} className="h-10 bg-gray-100 animate-pulse rounded" />)}
             </div>
           ) : recentBatches.length === 0 ? (
             <p className="text-sm text-gray-400">
@@ -216,9 +215,39 @@ export default function GovernanceDashboard() {
                 <li key={b.id} className="text-sm">
                   <p className="font-medium text-gray-800 truncate">{b.batch_name}</p>
                   <p className="text-xs text-gray-400">
-                    {b.approved_by_team_name} ·{' '}
-                    {new Date(b.approved_at).toLocaleDateString()} ·{' '}
-                    {b.content_count != null ? `${b.content_count} items` : ''}
+                    {b.approved_by_team_name} · {new Date(b.approved_at).toLocaleDateString()}
+                    {b.content_count != null ? ` · ${b.content_count} items` : ''}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* Recent import batches */}
+        <div className="bg-white border border-gray-200 rounded-xl p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-gray-700">Recent imports</h2>
+            <Link to="/admin/governance/import" className="text-xs text-primary-600 hover:underline">
+              Import
+            </Link>
+          </div>
+          {loading ? (
+            <div className="space-y-2">
+              {[1, 2].map((i) => <div key={i} className="h-10 bg-gray-100 animate-pulse rounded" />)}
+            </div>
+          ) : recentImports.length === 0 ? (
+            <p className="text-sm text-gray-400">No imports yet.</p>
+          ) : (
+            <ul className="space-y-3">
+              {recentImports.map((imp) => (
+                <li key={imp.id} className="text-sm">
+                  <p className="font-medium text-gray-800 truncate font-mono text-xs" title={imp.source_file_name}>
+                    {imp.source_file_name}
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    {imp.created_items.toLocaleString()} items · {imp.package_type.toUpperCase()} ·{' '}
+                    {new Date(imp.created_at).toLocaleDateString()}
                   </p>
                 </li>
               ))}
