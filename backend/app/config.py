@@ -75,6 +75,18 @@ class Settings(BaseSettings):
     rate_limit_upload_per_minute: int = 10
     rate_limit_ai_per_minute: int = 20
 
+    # ── PayPal ───────────────────────────────────────────────────────────────
+    paypal_client_id: str = ""
+    paypal_client_secret: str = ""
+    paypal_webhook_id: str = ""
+    paypal_env: str = "sandbox"  # "sandbox" or "live"
+    # Set to "true" in dev/test to skip PayPal webhook signature verification.
+    # Must never be "true" in production.
+    paypal_skip_webhook_verify: bool = False
+
+    # Public URL for return/cancel redirects (e.g. https://app.pharmlearn.dev)
+    app_public_url: str = "http://localhost:5173"
+
     # ── Monitoring ────────────────────────────────────────────────────────────
     sentry_dsn: str = ""
 

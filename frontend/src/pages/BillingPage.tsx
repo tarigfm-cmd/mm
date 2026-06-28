@@ -3,7 +3,6 @@ import {
   CreditCardIcon,
   CheckCircleIcon,
   ChartBarIcon,
-  SparklesIcon,
 } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
 import { billingApi } from '@/services/billingApi'
@@ -35,6 +34,9 @@ function PlanCard({
   plan: SubscriptionPlanRead
   isCurrent: boolean
 }) {
+  const [checkoutLoading, setCheckoutLoading] = useState(false)
+  const [paypalUnavailable, setPaypalUnavailable] = useState(false)
+
   const features: string[] = []
   if (plan.max_training_sessions_per_month !== null)
     features.push(`${plan.max_training_sessions_per_month.toLocaleString()} sessions / month`)
@@ -45,6 +47,26 @@ function PlanCard({
   if (plan.allows_bulk_import) features.push('Bulk content import')
   if (plan.allows_admin_governance) features.push('Admin governance')
   if (!plan.allows_ai_tutor) features.push('AI tutor (coming soon)')
+
+  const handlePayPal = async () => {
+    setCheckoutLoading(true)
+    setPaypalUnavailable(false)
+    try {
+      const result = await billingApi.createPayPalCheckout(plan.code)
+      window.location.href = result.checkout_url
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 503) {
+        setPaypalUnavailable(true)
+      } else {
+        toast.error('Checkout failed. Please try again.')
+      }
+    } finally {
+      setCheckoutLoading(false)
+    }
+  }
+
+  const isPaid = plan.price_monthly_cents > 0
 
   return (
     <div
@@ -71,15 +93,33 @@ function PlanCard({
           </li>
         ))}
       </ul>
-      {!isCurrent && (
+      {!isCurrent && isPaid && (
+        <div className="mt-auto pt-2 space-y-2">
+          {paypalUnavailable ? (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              PayPal checkout is not configured yet. Contact admin for beta upgrade.
+            </p>
+          ) : (
+            <button
+              onClick={handlePayPal}
+              disabled={checkoutLoading}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[#0070ba] hover:bg-[#005ea6] disabled:opacity-60 disabled:cursor-not-allowed rounded-lg transition-colors"
+            >
+              {checkoutLoading ? (
+                <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <svg viewBox="0 0 24 24" className="w-4 h-4 fill-white" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M7.076 21.337H2.47a.641.641 0 0 1-.633-.74L4.944.901C5.026.382 5.474 0 5.998 0h7.46c2.57 0 4.578.543 5.69 1.81 1.01 1.15 1.304 2.42 1.012 4.287-.023.143-.047.288-.077.437-.983 5.05-4.349 6.797-8.647 6.797h-2.19c-.524 0-.968.382-1.05.9l-1.12 7.106zm14.146-14.42a3.35 3.35 0 0 0-.607-.541c-.013.076-.026.175-.041.254-.93 4.778-4.005 7.201-9.138 7.201h-2.19a.563.563 0 0 0-.556.479l-1.187 7.527h-.506l-.24 1.516a.56.56 0 0 0 .554.647h3.882c.46 0 .85-.334.922-.788.06-.26.76-4.852.816-5.09a.932.932 0 0 1 .92-.788h.58c3.76 0 6.705-1.528 7.565-5.946.36-1.847.174-3.388-.774-4.471z" />
+                </svg>
+              )}
+              Pay with PayPal
+            </button>
+          )}
+        </div>
+      )}
+      {!isCurrent && !isPaid && (
         <div className="mt-auto pt-2">
-          <div className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-gray-500 bg-gray-50 border border-gray-200 rounded-lg cursor-not-allowed">
-            <SparklesIcon className="w-4 h-4" />
-            Online checkout coming soon
-          </div>
-          <p className="text-xs text-gray-400 text-center mt-1.5">
-            Contact your admin to upgrade during beta.
-          </p>
+          <p className="text-xs text-gray-400 text-center">No payment required</p>
         </div>
       )}
     </div>
@@ -190,10 +230,10 @@ export default function BillingPage() {
 
           {/* Upgrade note */}
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
-            <p className="font-semibold mb-1">Upgrading during beta</p>
+            <p className="font-semibold mb-1">PayPal checkout (beta)</p>
             <p>
-              Online checkout is coming soon. During beta, contact your platform administrator to
-              manually upgrade your subscription.
+              Subscriptions are activated automatically after PayPal payment is confirmed. If you
+              experience any issues, contact your platform administrator.
             </p>
           </div>
         </>

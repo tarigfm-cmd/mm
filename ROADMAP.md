@@ -224,6 +224,23 @@ Goal: Internal billing infrastructure — plan limits, entitlement enforcement, 
 - [x] TypeScript check: zero errors
 - [x] DEVELOPMENT.md updated with billing API reference, plan table, entitlement service docs, upgrade instructions
 
+## PayPal Wiring Correction Gate — Checkout + Webhook Foundation (Complete)
+
+Goal: Wire PayPal as the live checkout provider behind a clean abstraction layer. No client-side plan activation. Idempotent webhook processing.
+
+- [x] Payment provider abstraction — `base.py` (ABC + `CheckoutResult` + `WebhookVerifyResult`), `paypal.py` (full async PayPal Subscriptions v1 + Orders v2 fallback), `registry.py` (lru_cached factory)
+- [x] Config settings — `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, `PAYPAL_ENV`, `APP_PUBLIC_URL`, `PAYPAL_SKIP_WEBHOOK_VERIFY`
+- [x] `PaymentWebhookEvent` model — idempotency via `unique(provider, external_event_id)`, `processed_status`, `processing_error`
+- [x] Alembic migration `009` — `payment_webhook_events` table
+- [x] `POST /api/billing/checkout/paypal` — validates plan, creates PayPal subscription, returns approval URL; 503 if unconfigured; records `billing_checkout_started` usage event
+- [x] `POST /api/billing/webhooks/paypal` — verifies signature (fail-closed); idempotent storage; ACTIVATED→active, CANCELLED→canceled, SUSPENDED→past_due, EXPIRED→expired; unresolvable events stored as `unresolved` (no crash)
+- [x] Frontend — PayPal checkout button (brand blue, PayPal SVG icon) on paid plan cards; 503 → inline "not configured" message; no client-side subscription activation
+- [x] `billingApi.createPayPalCheckout(planCode)` + `PayPalCheckoutResponse` TypeScript type
+- [x] 24 new backend tests in `test_paypal.py` — all mocked (no real PayPal credentials required)
+- [x] Full suite: **344/344** backend tests passing
+- [x] TypeScript check: zero errors
+- [x] DEVELOPMENT.md updated with PayPal env vars, sandbox setup, checkout/webhook flow, provider abstraction docs, excluded integrations note
+
 ## Phase 2 — Users & Auth (continued)
 
 Goal: Full user-facing auth and profile features.

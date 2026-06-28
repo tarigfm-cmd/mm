@@ -64,3 +64,32 @@ class MonthlyUsageResponse(BaseModel):
 class SubscriptionAssignRequest(BaseModel):
     plan_code: str
     status: str = "active"
+
+
+class PayPalCheckoutRequest(BaseModel):
+    plan_code: str
+
+
+class PayPalCheckoutResponse(BaseModel):
+    checkout_url: str
+    external_subscription_id: Optional[str]
+    status: str
+    provider: str
+
+
+class PayPalWebhookResponse(BaseModel):
+    status: str
+    detail: Optional[str] = None
+
+
+class PaymentWebhookEventRead(BaseModel):
+    id: uuid.UUID
+    provider: str
+    external_event_id: Optional[str]
+    event_type: Optional[str]
+    processed_status: str
+    processing_error: Optional[str]
+    received_at: datetime
+    processed_at: Optional[datetime]
+
+    model_config = {"from_attributes": True}

@@ -10,6 +10,8 @@ from sqlalchemy import (
     Integer,
     JSON,
     String,
+    Text,
+    UniqueConstraint,
     Uuid,
     func,
 )
@@ -31,6 +33,8 @@ USAGE_EVENT_TYPES = frozenset({
     "progress_viewed",
     "import_preview",
     "import_commit",
+    "billing_checkout_started",
+    "billing_webhook_received",
 })
 
 
@@ -146,3 +150,24 @@ class UsageEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )
+
+
+class PaymentWebhookEvent(Base):
+    __tablename__ = "payment_webhook_events"
+    __table_args__ = (
+        UniqueConstraint("provider", "external_event_id", name="uq_webhook_provider_event"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True, native_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    external_event_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    event_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    processed_status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
+    processing_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    payload_summary_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

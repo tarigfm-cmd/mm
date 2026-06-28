@@ -486,3 +486,83 @@ pytest tests/test_billing.py -v
 ```
 
 22 tests covering: plan listing, free-tier fallback, subscription assignment, entitlement service (limit enforcement, superuser bypass, unlimited plans).
+
+## PayPal Checkout & Webhooks
+
+### Environment variables
+
+```env
+# PayPal credentials (leave blank to disable checkout; returns HTTP 503 gracefully)
+PAYPAL_CLIENT_ID=
+PAYPAL_CLIENT_SECRET=
+PAYPAL_WEBHOOK_ID=
+PAYPAL_ENV=sandbox          # "sandbox" or "live"
+PAYPAL_SKIP_WEBHOOK_VERIFY=false  # Set "true" in dev/test only. NEVER true in production.
+
+# Public URL for PayPal return/cancel redirects
+APP_PUBLIC_URL=http://localhost:5173
+
+# Map plan codes to pre-created PayPal billing plan IDs (from PayPal dashboard or Catalog API)
+# If unset, falls back to a one-time order (sandbox/demo only)
+PAYPAL_PLAN_ID_PRO=P-XXXXXXXXXXXXXXXXXXXX
+PAYPAL_PLAN_ID_INSTITUTION=P-XXXXXXXXXXXXXXXXXXXX
+PAYPAL_PLAN_ID_ENTERPRISE=P-XXXXXXXXXXXXXXXXXXXX
+```
+
+### PayPal sandbox setup
+
+1. Create a sandbox app at https://developer.paypal.com/developer/applications
+2. Copy `Client ID` and `Secret` to `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET`
+3. Create billing plans in the PayPal Catalog API (or sandbox dashboard) and set `PAYPAL_PLAN_ID_*`
+4. Set up a webhook listener (e.g. via `ngrok`) and register the endpoint URL in PayPal developer portal
+5. Copy the Webhook ID to `PAYPAL_WEBHOOK_ID`
+
+### Checkout flow
+
+```
+POST /api/billing/checkout/paypal   { plan_code: "pro" }
+  → returns { checkout_url, external_subscription_id, status, provider }
+  → Frontend redirects user to checkout_url (PayPal approval page)
+  → User approves → PayPal POSTs BILLING.SUBSCRIPTION.ACTIVATED webhook
+  → Subscription activated via webhook only (never from the return URL)
+```
+
+Missing credentials → HTTP 503 "PayPal checkout is not configured yet."
+
+### Webhook endpoint
+
+```
+POST /api/billing/webhooks/paypal   (no auth required — verified by PayPal signature)
+```
+
+- Verifies signature via `/v1/notifications/verify-webhook-signature` (unless `PAYPAL_SKIP_WEBHOOK_VERIFY=true`)
+- Idempotent: duplicate events return `{ status: "already_processed" }`
+- Resolves user via `external_subscription_id` or `custom_id` (set at checkout)
+- Unresolvable events stored with `processed_status="unresolved"` — no crash
+
+| PayPal event | Subscription status |
+|---|---|
+| `BILLING.SUBSCRIPTION.ACTIVATED` | `active` |
+| `BILLING.SUBSCRIPTION.CANCELLED` | `canceled` |
+| `BILLING.SUBSCRIPTION.SUSPENDED` | `past_due` |
+| `BILLING.SUBSCRIPTION.EXPIRED` | `expired` |
+
+### Provider abstraction
+
+`backend/app/services/payment_providers/`:
+- `base.py` — `PaymentProviderBase` ABC, `CheckoutResult`, `WebhookVerifyResult`
+- `paypal.py` — `PayPalProvider` (httpx-based, async)
+- `registry.py` — `get_paypal_provider()` factory (lru_cached, reads from Settings)
+
+### Running PayPal tests
+
+```bash
+cd backend
+pytest tests/test_paypal.py -v
+```
+
+24 tests — no real PayPal credentials required. All HTTP calls are mocked.
+
+### Payment integrations excluded
+
+Stripe, Paddle, Lemon Squeezy, and Shopify are **permanently excluded** from this project.

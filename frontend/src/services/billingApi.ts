@@ -7,6 +7,7 @@ import { useAppStore } from '@/store/appStore'
 import { getRefreshToken, setStoredRefreshToken } from '@/services/api'
 import type {
   MonthlyUsageResponse,
+  PayPalCheckoutResponse,
   SubscriptionPlanRead,
   UserSubscriptionRead,
   UserSubscriptionWithFallback,
@@ -99,6 +100,14 @@ export const billingApi = {
     const { data } = await billingHttp.post<UserSubscriptionRead>(
       `/api/billing/admin/users/${userId}/subscription`,
       { plan_code: planCode, status: subStatus },
+    )
+    return data
+  },
+
+  createPayPalCheckout: async (planCode: string): Promise<PayPalCheckoutResponse> => {
+    const { data } = await billingHttp.post<PayPalCheckoutResponse>(
+      '/api/billing/checkout/paypal',
+      { plan_code: planCode },
     )
     return data
   },

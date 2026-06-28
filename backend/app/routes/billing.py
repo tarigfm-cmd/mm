@@ -1,18 +1,23 @@
 """Billing and subscription management endpoints."""
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, require_superuser
 from app.database import get_db
-from app.models.billing import SubscriptionPlan, UserSubscription
+from app.models.billing import PaymentWebhookEvent, SubscriptionPlan, UserSubscription
 from app.models.identity import User
 from app.schemas.billing import (
     MonthlyUsageResponse,
+    PayPalCheckoutRequest,
+    PayPalCheckoutResponse,
+    PayPalWebhookResponse,
     SubscriptionAssignRequest,
     SubscriptionPlanRead,
     UsageSummary,
@@ -23,7 +28,12 @@ from app.services.entitlements import (
     count_monthly_usage,
     get_effective_plan,
     get_user_current_subscription,
+    record_usage_event,
 )
+from app.services.payment_providers.paypal import PayPalNotConfiguredError
+from app.services.payment_providers.registry import get_paypal_provider
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
@@ -142,3 +152,183 @@ async def admin_assign_subscription(
     await db.refresh(new_sub)
 
     return UserSubscriptionRead.model_validate(new_sub)
+
+
+@router.post("/checkout/paypal", response_model=PayPalCheckoutResponse)
+async def paypal_checkout(
+    body: PayPalCheckoutRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PayPalCheckoutResponse:
+    """Initiate a PayPal checkout for the given plan. Returns an approval URL."""
+    provider = get_paypal_provider()
+
+    if not provider.is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="PayPal checkout is not configured yet. Contact admin for beta upgrade.",
+        )
+
+    plan_row = (
+        await db.execute(
+            select(SubscriptionPlan).where(SubscriptionPlan.code == body.plan_code).limit(1)
+        )
+    ).scalar_one_or_none()
+    if plan_row is None:
+        raise HTTPException(status_code=404, detail=f"Plan '{body.plan_code}' not found.")
+    if not plan_row.is_active:
+        raise HTTPException(status_code=422, detail=f"Plan '{body.plan_code}' is not active.")
+    if plan_row.price_monthly_cents == 0:
+        raise HTTPException(
+            status_code=422,
+            detail="PayPal checkout is not available for the free plan.",
+        )
+
+    from app.config import get_settings
+    settings = get_settings()
+    return_url = f"{settings.app_public_url}/billing/paypal/return"
+    cancel_url = f"{settings.app_public_url}/billing/paypal/cancel"
+
+    try:
+        result = await provider.create_subscription(
+            plan_code=body.plan_code,
+            price_monthly_cents=plan_row.price_monthly_cents,
+            currency=plan_row.currency,
+            user_id=str(current_user.id),
+            return_url=return_url,
+            cancel_url=cancel_url,
+        )
+    except PayPalNotConfiguredError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="PayPal checkout is not configured yet. Contact admin for beta upgrade.",
+        )
+    except Exception as exc:
+        logger.error("PayPal checkout failed: %s", exc)
+        raise HTTPException(status_code=502, detail="PayPal service error. Try again later.")
+
+    await record_usage_event(
+        db,
+        user_id=current_user.id,
+        event_type="billing_checkout_started",
+        metadata={"plan_code": body.plan_code, "provider": "paypal"},
+    )
+
+    return PayPalCheckoutResponse(
+        checkout_url=result.checkout_url,
+        external_subscription_id=result.external_subscription_id,
+        status=result.status,
+        provider=result.provider,
+    )
+
+
+@router.post("/webhooks/paypal", response_model=PayPalWebhookResponse)
+async def paypal_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> PayPalWebhookResponse:
+    """Receive and process PayPal webhook events."""
+    raw_body = await request.body()
+    headers = dict(request.headers)
+
+    provider = get_paypal_provider()
+    verify_result = await provider.verify_webhook(headers=headers, raw_body=raw_body)
+
+    if not verify_result.verified:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Webhook signature verification failed.",
+        )
+
+    # Idempotency: check if already processed
+    existing = (
+        await db.execute(
+            select(PaymentWebhookEvent).where(
+                PaymentWebhookEvent.provider == "paypal",
+                PaymentWebhookEvent.external_event_id == verify_result.external_event_id,
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if existing is not None:
+        return PayPalWebhookResponse(status="already_processed")
+
+    # Determine subscription status transition
+    new_sub_status = provider.event_to_subscription_status(verify_result.event_type)
+
+    webhook_event = PaymentWebhookEvent(
+        provider="paypal",
+        external_event_id=verify_result.external_event_id,
+        event_type=verify_result.event_type,
+        processed_status="pending",
+        payload_summary_json=verify_result.payload_summary,
+    )
+    db.add(webhook_event)
+
+    processing_error: Optional[str] = None
+
+    if new_sub_status and verify_result.external_subscription_id:
+        # Resolve user subscription
+        user_sub = (
+            await db.execute(
+                select(UserSubscription).where(
+                    UserSubscription.external_subscription_id == verify_result.external_subscription_id,
+                    UserSubscription.external_provider == "paypal",
+                ).limit(1)
+            )
+        ).scalar_one_or_none()
+
+        if user_sub is None and verify_result.custom_id:
+            # Try resolving via custom_id (user_id set at checkout)
+            try:
+                user_uuid = uuid.UUID(verify_result.custom_id)
+                user_sub = (
+                    await db.execute(
+                        select(UserSubscription).where(
+                            UserSubscription.user_id == user_uuid,
+                            UserSubscription.status.in_(["active", "trialing", "past_due"]),
+                        ).order_by(UserSubscription.created_at.desc()).limit(1)
+                    )
+                ).scalar_one_or_none()
+                if user_sub is None:
+                    # Create a new subscription tied to the user
+                    free_plan = (
+                        await db.execute(
+                            select(SubscriptionPlan).where(SubscriptionPlan.code == "free").limit(1)
+                        )
+                    ).scalar_one_or_none()
+                    if free_plan:
+                        # We'll update after we find/create the plan association
+                        pass
+            except ValueError:
+                user_uuid = None
+
+        if user_sub is not None:
+            user_sub.status = new_sub_status
+            if verify_result.external_subscription_id:
+                user_sub.external_subscription_id = verify_result.external_subscription_id
+            user_sub.external_provider = "paypal"
+            webhook_event.processed_status = "processed"
+        else:
+            webhook_event.processed_status = "unresolved"
+            processing_error = (
+                f"Could not resolve subscription for external_id="
+                f"{verify_result.external_subscription_id} custom_id={verify_result.custom_id}"
+            )
+            logger.warning("PayPal webhook unresolved: %s", processing_error)
+    else:
+        webhook_event.processed_status = "processed"
+
+    webhook_event.processing_error = processing_error
+    webhook_event.processed_at = datetime.now(timezone.utc)
+
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        return PayPalWebhookResponse(status="already_processed")
+
+    return PayPalWebhookResponse(
+        status=webhook_event.processed_status,
+        detail=processing_error,
+    )

@@ -47,3 +47,10 @@ export interface MonthlyUsageResponse {
   usage: UsageSummary[]
   period_start: string
 }
+
+export interface PayPalCheckoutResponse {
+  checkout_url: string
+  external_subscription_id: string | null
+  status: string
+  provider: string
+}
