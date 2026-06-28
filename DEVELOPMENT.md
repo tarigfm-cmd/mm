@@ -400,3 +400,89 @@ npx tsc --noEmit
 ```
 
 All governance pages and API client are fully typed. `ContentItemListItem` includes `external_id: string | null`. New types (`GovernanceSummary`, `ImportBatchRead`, `ImportBatchListResponse`, `RegionPublishingRuleRead/Create/Update`) are defined in `frontend/src/types/governance.ts`.
+
+## Subscription & Billing
+
+Plans, entitlements, and usage metering — no live payment processor connected (beta).
+
+### Plans
+
+| Code | Price | Sessions/month | OSCE | Games | Institution | Admin |
+|------|-------|----------------|------|-------|-------------|-------|
+| `free` | Free | 20 | No | No | No | No |
+| `pro` | £19.99/mo | 1,000 | Yes | Yes | No | No |
+| `institution` | £99/mo | 100,000 | Yes | Yes | Yes | No |
+| `enterprise` | £499/mo | Unlimited | Yes | Yes | Yes | Yes |
+
+Plans are seeded idempotently on startup via `_seed_subscription_plans()` in `main.py`.
+
+### Default plan
+
+All registered users get the **free** plan entitlement by default (no `UserSubscription` row required — entitlement service falls back to `free`).
+
+Only a platform admin (`is_superuser=True`) can assign a plan to a user.
+
+### Entitlement service
+
+`backend/app/services/entitlements.py`:
+
+| Function | Purpose |
+|----------|---------|
+| `get_user_current_subscription(db, user_id)` | Active subscription or `None` |
+| `get_effective_plan(db, user_id)` | Plan from subscription, else free plan |
+| `can_start_training_session(db, user_id, is_superuser)` | `(bool, reason)` — admins bypass |
+| `record_usage_event(db, user_id, event_type, ...)` | Insert `UsageEvent`; caller commits |
+| `count_monthly_usage(db, user_id, event_type)` | Count events in current calendar month |
+
+### Billing API routes
+
+| Method | Endpoint | Auth |
+|--------|----------|------|
+| `GET` | `/api/billing/plans` | Any authenticated user |
+| `GET` | `/api/billing/me/subscription` | Any authenticated user |
+| `GET` | `/api/billing/me/usage` | Any authenticated user |
+| `POST` | `/api/billing/admin/users/{user_id}/subscription` | Superuser only |
+
+### Training session entitlement
+
+`POST /api/learn/content/{id}/sessions` now:
+1. Calls `can_start_training_session()` before creating the session
+2. Returns **HTTP 402** with `"Training session limit reached for your current plan."` if the monthly limit is exceeded
+3. Records `training_session_started` usage event on success
+
+`POST /api/learn/sessions/{session_id}/submit` records `training_session_completed` on commit.
+
+### Frontend billing pages
+
+| URL | Page |
+|-----|------|
+| `/billing` | BillingPage — current plan, session usage bar, all 4 plan cards, upgrade CTA |
+
+The **Billing** link appears in `Navigation` for all authenticated users.
+
+When `startSession` returns 402, `TrainingDetailPage` shows a paywall card with a link to `/billing`.
+
+`ProfilePage` shows the user's plan name as a badge (fetched from `GET /api/billing/me/subscription`).
+
+### Upgrading during beta
+
+Online checkout is not connected. To upgrade a user:
+
+```bash
+# Via API (requires superuser JWT)
+curl -X POST http://localhost:8000/api/billing/admin/users/{user_id}/subscription \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"plan_code": "pro"}'
+```
+
+Or use the admin assignment endpoint from the Swagger docs at `http://localhost:8000/docs`.
+
+### Running billing tests
+
+```bash
+cd backend
+pytest tests/test_billing.py -v
+```
+
+22 tests covering: plan listing, free-tier fallback, subscription assignment, entitlement service (limit enforcement, superuser bypass, unlimited plans).

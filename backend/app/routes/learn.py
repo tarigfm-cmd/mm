@@ -48,6 +48,7 @@ from app.schemas.learn import (
     TrainingFlowResponse,
     TrainingFlowStep,
 )
+from app.services.entitlements import can_start_training_session, record_usage_event
 from app.services.training_engine import REVEAL_KEYS, build_training_flow, score_submission
 
 router = APIRouter(prefix="/api/learn", tags=["learner"])
@@ -415,6 +416,13 @@ async def start_training_session(
             detail=f"region_code must be one of {sorted(REGION_CODES)}",
         )
 
+    # Entitlement check — platform admins bypass all limits
+    allowed, reason = await can_start_training_session(
+        db, current_user.id, is_superuser=current_user.is_superuser
+    )
+    if not allowed:
+        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=reason)
+
     row = await _fetch_published_row(item_id, body.region_code, db)
     if row is None:
         raise HTTPException(status_code=404, detail="Content not found or not published for this region.")
@@ -434,6 +442,15 @@ async def start_training_session(
         started_at=datetime.now(timezone.utc),
     )
     db.add(session)
+
+    await record_usage_event(
+        db,
+        current_user.id,
+        "training_session_started",
+        content_item_id=item_id,
+        content_version_id=row.content_version_id,
+    )
+
     await db.commit()
     await db.refresh(session)
 
@@ -549,6 +566,14 @@ async def submit_training_session(
         time_to_decision_seconds=body.time_to_decision_seconds,
     )
     db.add(analytics)
+
+    await record_usage_event(
+        db,
+        current_user.id,
+        "training_session_completed",
+        content_item_id=session.content_item_id,
+        content_version_id=session.content_version_id,
+    )
 
     await db.commit()
     await db.refresh(session)

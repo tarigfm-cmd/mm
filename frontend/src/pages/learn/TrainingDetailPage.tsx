@@ -7,6 +7,7 @@ import {
   InformationCircleIcon,
   PlayIcon,
   ArrowRightIcon,
+  LockClosedIcon,
 } from '@heroicons/react/24/outline'
 import { learnApi } from '@/services/learnApi'
 import type {
@@ -155,6 +156,7 @@ export default function TrainingDetailPage() {
   const [starting, setStarting] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [paywallBlocked, setPaywallBlocked] = useState(false)
   const startedAt = useRef(Date.now())
 
   useEffect(() => {
@@ -180,8 +182,13 @@ export default function TrainingDetailPage() {
       const sess = await learnApi.startSession(id, regionCode)
       setSession(sess)
       setCurrentStepIdx(0)
-    } catch {
-      toast.error('Failed to start training session. Please try again.')
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 402) {
+        setPaywallBlocked(true)
+      } else {
+        toast.error('Failed to start training session. Please try again.')
+      }
     } finally {
       setStarting(false)
     }
@@ -294,8 +301,29 @@ export default function TrainingDetailPage() {
         </div>
       )}
 
+      {/* Paywall block — shown when 402 returned from startSession */}
+      {paywallBlocked && !session && !result && (
+        <div className="bg-white border border-amber-300 rounded-xl p-6 space-y-4">
+          <div className="flex items-center gap-3">
+            <LockClosedIcon className="w-6 h-6 text-amber-500 flex-shrink-0" />
+            <div>
+              <p className="text-sm font-semibold text-gray-900">Session limit reached</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                You have used all training sessions available on your current plan this month.
+              </p>
+            </div>
+          </div>
+          <Link
+            to="/billing"
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
+          >
+            View plans & upgrade
+          </Link>
+        </div>
+      )}
+
       {/* Pre-session: start training */}
-      {!session && !result && (
+      {!paywallBlocked && !session && !result && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
           {flow && (
             <div>

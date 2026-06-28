@@ -11,6 +11,7 @@ import {
   BookOpenIcon,
   TrophyIcon,
   UserCircleIcon,
+  CreditCardIcon,
 } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
 import { authApi } from '@/services/api'
@@ -20,6 +21,7 @@ const navItems = [
   { to: '/', label: 'Dashboard', icon: HomeIcon, end: true },
   { to: '/learn/content', label: 'Training Library', icon: BookOpenIcon, end: false },
   { to: '/learn/progress', label: 'Training Progress', icon: TrophyIcon, end: false },
+  { to: '/billing', label: 'Billing', icon: CreditCardIcon, end: false },
   { to: '/scenarios', label: 'Scenarios', icon: BeakerIcon, end: false },
   { to: '/progress', label: 'Scenario Progress', icon: ChartBarIcon, end: false },
   { to: '/upload', label: 'Upload', icon: ArrowUpTrayIcon, end: false },

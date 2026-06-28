@@ -195,6 +195,35 @@ Goal: Audit and harden the full product flow before building subscriptions, paym
 - [x] TypeScript check: zero errors
 - [x] Backend tests: 298/298 passing (no backend changes required)
 
+## Subscription / Paywall Foundation — Phase 1 (Complete)
+
+Goal: Internal billing infrastructure — plan limits, entitlement enforcement, usage metering. No live payment processor.
+
+- [x] `SubscriptionPlan` model — code, name, price_monthly_cents, currency, billing_interval, is_active, `max_training_sessions_per_month` (null=unlimited), `max_published_content_access_per_month`, 6 feature flags (admin_governance, bulk_import, institution_dashboard, ai_tutor, osce, games)
+- [x] `UserSubscription` model — user_id FK, plan_id FK, status (trialing/active/past_due/canceled/expired), period dates, cancel_at_period_end, assigned_by
+- [x] `UsageEvent` model — user_id, org_id nullable, subscription_id nullable, event_type, content_item_id nullable, content_version_id nullable, metadata_json
+- [x] Alembic migration 008 — 3 new tables
+- [x] Startup seed (idempotent) — 4 default plans: free/pro/institution/enterprise
+- [x] `backend/app/services/entitlements.py` — `get_user_current_subscription`, `get_effective_plan`, `can_start_training_session`, `record_usage_event`, `count_monthly_usage` (calendar month window)
+- [x] Default free-plan fallback: all registered users implicitly on free plan (no row required)
+- [x] Platform admins bypass all entitlement limits
+- [x] Entitlement check on `POST /api/learn/content/{id}/sessions` — returns 402 if monthly limit exceeded
+- [x] `training_session_started` usage event recorded on session create; `training_session_completed` on submit
+- [x] `GET /api/billing/plans` — list active plans (any authenticated user)
+- [x] `GET /api/billing/me/subscription` — own subscription + effective plan with free-tier fallback
+- [x] `GET /api/billing/me/usage` — current month counts with per-event-type limit
+- [x] `POST /api/billing/admin/users/{user_id}/subscription` — superuser only; cancels existing active subscription before creating new one
+- [x] `frontend/src/types/billing.ts` — `SubscriptionPlanRead`, `UserSubscriptionRead`, `UserSubscriptionWithFallback`, `UsageSummary`, `MonthlyUsageResponse`
+- [x] `frontend/src/services/billingApi.ts` — `getPlans`, `getMySubscription`, `getMyUsage`, `adminAssignPlan` with JWT refresh interceptor
+- [x] `BillingPage` (`/billing`) — current plan card with session usage bar, 4 plan cards, upgrade CTA placeholder ("Online checkout coming soon")
+- [x] Navigation — Billing link (CreditCardIcon) added for all authenticated users
+- [x] `TrainingDetailPage` — handles 402 from `startSession`: shows paywall card with link to `/billing`
+- [x] `ProfilePage` — shows plan name as clickable badge (fetches from billing API on mount)
+- [x] 22 new backend tests in `test_billing.py` — plan listing, free-tier fallback, subscription assignment (admin-only, cancels existing), entitlement limits, superuser bypass, unlimited plan, usage recording
+- [x] Full suite: **320/320** backend tests passing
+- [x] TypeScript check: zero errors
+- [x] DEVELOPMENT.md updated with billing API reference, plan table, entitlement service docs, upgrade instructions
+
 ## Phase 2 — Users & Auth (continued)
 
 Goal: Full user-facing auth and profile features.
@@ -243,9 +272,9 @@ Goal: Institutional reporting and sustainable revenue.
 
 - [ ] Learner progress dashboard (scores over time, weak areas)
 - [ ] Cohort analytics for educators and institutions
-- [ ] Subscription plans (Free / Pro / Institution)
-- [ ] Stripe billing integration
-- [ ] Usage-based plan limits (AI calls, storage)
+- [x] Subscription plans (Free / Pro / Institution / Enterprise) — internal billing foundation complete
+- [x] Usage-based plan limits — training session metering, calendar-month window
+- [ ] Stripe billing integration (live checkout — not yet connected)
 - [ ] Admin dashboard (users, content, revenue)
 - [ ] Export to PDF/CSV (certificates, progress reports)
 

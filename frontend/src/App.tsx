@@ -16,6 +16,7 @@ const ProgressPage = lazy(() => import('@/pages/ProgressPage'))
 const LoginPage = lazy(() => import('@/pages/LoginPage'))
 const RegisterPage = lazy(() => import('@/pages/RegisterPage'))
 const ProfilePage = lazy(() => import('@/pages/ProfilePage'))
+const BillingPage = lazy(() => import('@/pages/BillingPage'))
 
 // Learner training pages
 const TrainingLibraryPage = lazy(() => import('@/pages/learn/TrainingLibraryPage'))
@@ -64,6 +65,7 @@ function AppRoutes() {
 
         {/* Account */}
         <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/billing" element={<BillingPage />} />
 
         {/* Admin-only governance routes */}
         <Route element={<AdminRoute />}>

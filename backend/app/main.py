@@ -15,6 +15,7 @@ from app.config import get_settings
 from app.database import Base, engine
 from app.routes import analytics as analytics_router
 from app.routes import auth as auth_router
+from app.routes import billing as billing_router
 from app.routes import content as content_router
 from app.routes import evidence as evidence_router
 from app.routes import health as health_router
@@ -36,12 +37,87 @@ if settings.sentry_dsn:
 limiter = Limiter(key_func=get_remote_address)
 
 
+async def _seed_subscription_plans() -> None:
+    """Idempotent seed for the 4 default subscription plans."""
+    from app.database import SessionLocal
+    from app.models.billing import SubscriptionPlan
+
+    plans = [
+        dict(
+            code="free",
+            name="Free",
+            price_monthly_cents=0,
+            max_training_sessions_per_month=20,
+            max_published_content_access_per_month=100,
+            allows_admin_governance=False,
+            allows_bulk_import=False,
+            allows_institution_dashboard=False,
+            allows_ai_tutor=False,
+            allows_osce=False,
+            allows_games=False,
+        ),
+        dict(
+            code="pro",
+            name="Pro",
+            price_monthly_cents=1999,
+            max_training_sessions_per_month=1000,
+            max_published_content_access_per_month=10000,
+            allows_admin_governance=False,
+            allows_bulk_import=False,
+            allows_institution_dashboard=False,
+            allows_ai_tutor=False,
+            allows_osce=True,
+            allows_games=True,
+        ),
+        dict(
+            code="institution",
+            name="Institution",
+            price_monthly_cents=9900,
+            max_training_sessions_per_month=100000,
+            max_published_content_access_per_month=None,
+            allows_admin_governance=False,
+            allows_bulk_import=False,
+            allows_institution_dashboard=True,
+            allows_ai_tutor=False,
+            allows_osce=True,
+            allows_games=True,
+        ),
+        dict(
+            code="enterprise",
+            name="Enterprise",
+            price_monthly_cents=49900,
+            max_training_sessions_per_month=None,
+            max_published_content_access_per_month=None,
+            allows_admin_governance=True,
+            allows_bulk_import=True,
+            allows_institution_dashboard=True,
+            allows_ai_tutor=False,
+            allows_osce=True,
+            allows_games=True,
+        ),
+    ]
+
+    from sqlalchemy import select
+    async with SessionLocal() as db:
+        for plan_data in plans:
+            existing = (
+                await db.execute(
+                    select(SubscriptionPlan).where(SubscriptionPlan.code == plan_data["code"])
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                db.add(SubscriptionPlan(**plan_data))
+        await db.commit()
+    logger.info("Subscription plans seeded.")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Starting up — creating database tables…")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables ready.")
+    await _seed_subscription_plans()
     yield
     logger.info("Shutting down — disposing database engine…")
     await engine.dispose()
@@ -87,6 +163,7 @@ app.include_router(content_router.router)
 app.include_router(evidence_router.router)
 app.include_router(analytics_router.router)
 app.include_router(learn_router.router)
+app.include_router(billing_router.router)
 
 
 @app.exception_handler(Exception)

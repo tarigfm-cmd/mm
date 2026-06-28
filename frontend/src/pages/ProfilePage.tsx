@@ -1,15 +1,25 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, Link } from 'react-router-dom'
 import {
   UserCircleIcon,
   PencilSquareIcon,
   CheckIcon,
   XMarkIcon,
   ArrowRightStartOnRectangleIcon,
+  CreditCardIcon,
 } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
 import { authApi } from '@/services/api'
+import { billingApi } from '@/services/billingApi'
 import { useAppStore } from '@/store/appStore'
+import type { SubscriptionPlanRead } from '@/types/billing'
+
+const PLAN_BADGE: Record<string, string> = {
+  free: 'bg-gray-100 text-gray-600',
+  pro: 'bg-primary-100 text-primary-700',
+  institution: 'bg-teal-100 text-teal-700',
+  enterprise: 'bg-amber-100 text-amber-700',
+}
 
 export default function ProfilePage() {
   const navigate = useNavigate()
@@ -20,6 +30,14 @@ export default function ProfilePage() {
   const [username, setUsername] = useState(currentUser?.username ?? '')
   const [saving, setSaving] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<{ username?: string }>({})
+  const [plan, setPlan] = useState<SubscriptionPlanRead | null>(null)
+
+  useEffect(() => {
+    billingApi
+      .getMySubscription()
+      .then((sub) => setPlan(sub.plan))
+      .catch(() => {})
+  }, [])
 
   if (!currentUser) return null
 
@@ -87,6 +105,15 @@ export default function ProfilePage() {
               <span className="inline-block mt-1 px-2 py-0.5 bg-amber-400 text-amber-900 text-xs font-semibold rounded-full">
                 Administrator
               </span>
+            )}
+            {plan && (
+              <Link
+                to="/billing"
+                className={`inline-flex items-center gap-1 mt-1 ml-1 px-2 py-0.5 text-xs font-semibold rounded-full ${PLAN_BADGE[plan.code] ?? 'bg-gray-100 text-gray-600'}`}
+              >
+                <CreditCardIcon className="w-3 h-3" />
+                {plan.name}
+              </Link>
             )}
           </div>
         </div>
