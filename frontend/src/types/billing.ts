@@ -44,10 +44,27 @@ export interface UserSubscriptionRead {
   plan: SubscriptionPlanRead
 }
 
+export interface PendingCheckoutRead {
+  id: string
+  provider: string
+  plan_code: string
+  status: string
+  created_at: string
+  external_subscription_id_hint: string | null
+}
+
 export interface UserSubscriptionWithFallback {
   subscription: UserSubscriptionRead | null
   plan: SubscriptionPlanRead
   is_free_tier: boolean
+  pending_checkout: PendingCheckoutRead | null
+  payment_state_message: string
+}
+
+export interface CancelSubscriptionResponse {
+  status: string
+  cancel_at_period_end: boolean
+  message: string
 }
 
 export interface UsageSummary {

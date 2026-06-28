@@ -441,6 +441,7 @@ Only a platform admin (`is_superuser=True`) can assign a plan to a user.
 | `GET` | `/api/billing/plans` | Any authenticated user |
 | `GET` | `/api/billing/me/subscription` | Any authenticated user |
 | `GET` | `/api/billing/me/usage` | Any authenticated user |
+| `POST` | `/api/billing/me/subscription/cancel` | Any authenticated user |
 | `POST` | `/api/billing/admin/users/{user_id}/subscription` | Superuser only |
 | `GET` | `/api/billing/admin/plans` | Superuser only |
 | `PATCH` | `/api/billing/admin/plans/{plan_code}` | Superuser only |
@@ -459,7 +460,9 @@ Only a platform admin (`is_superuser=True`) can assign a plan to a user.
 
 | URL | Page |
 |-----|------|
-| `/billing` | BillingPage — current plan, session usage bar, all 4 plan cards, upgrade CTA |
+| `/billing` | BillingPage — current plan, payment state badge, period dates, pending activation panel, cancel button, session usage bar, all 4 plan cards |
+| `/billing/success` | PayPalSuccessPage — pending state message, auto-polls up to 8 times, refresh button |
+| `/billing/cancel` | PayPalCancelPage — checkout cancelled, no state mutation |
 | `/admin/billing/plans` | AdminBillingPlansPage — PayPal readiness panel + plan table with PayPal Plan ID editor and checkout status (superuser only) |
 
 The **Billing** link appears in `Navigation` for all authenticated users.
@@ -633,7 +636,11 @@ POST /api/billing/webhooks/paypal   (no auth required — verified by PayPal sig
 - `PAYPAL_SKIP_WEBHOOK_VERIFY` must only be `true` in dev/test. Production rejects without valid signature.
 - Missing `PAYPAL_WEBHOOK_ID` → rejected (fail-closed)
 - Idempotent: duplicate events return `{ status: "already_processed" }`
-- Resolves subscription via `external_subscription_id`, then falls back to `custom_id` (user UUID set at checkout)
+- On `BILLING.SUBSCRIPTION.ACTIVATED` for a new subscriber:
+  1. Looks up `PaymentCheckoutSession` by `external_subscription_id`
+  2. Creates `UserSubscription(status=active)` from the checkout session
+  3. Marks the checkout session `activated`
+- For upgrades: resolves existing `UserSubscription` by `external_subscription_id`, then falls back to `custom_id` (user UUID)
 - Unresolvable events stored with `processed_status="unresolved"` — no crash
 - Raw webhook body is never stored; only a safe `payload_summary` is persisted
 
@@ -645,12 +652,45 @@ POST /api/billing/webhooks/paypal   (no auth required — verified by PayPal sig
 | `BILLING.SUBSCRIPTION.EXPIRED` | `expired` |
 | `BILLING.SUBSCRIPTION.PAYMENT.FAILED` | `past_due` |
 
+### Pending checkout tracking
+
+`PaymentCheckoutSession` is created whenever a PayPal checkout URL is successfully obtained:
+- `status=pending_activation` — checkout started, awaiting webhook
+- `status=activated` — webhook fired, `UserSubscription` created or updated
+- `status=cancelled` — user abandoned checkout
+
+`GET /api/billing/me/subscription` returns:
+- `pending_checkout`: most recent `pending_activation` session (provider, plan_code, hint of external ID)
+- `payment_state_message`: one of `free | active | pending_activation | past_due | canceled | expired`
+
+The success page polls `GET /me/subscription` up to 8 times (every 4 s) to detect activation. Activation is never performed client-side.
+
+### Cancellation
+
+`POST /api/billing/me/subscription/cancel` (authenticated):
+- **PayPal subscription** (has `external_provider=paypal` and `external_subscription_id`):
+  - Calls `PayPalProvider.cancel_subscription(external_id)` — requires PayPal configured
+  - If not configured → HTTP 503 with message explaining the constraint
+  - On success: `status=canceled`
+- **Manual subscription** (assigned by admin, no PayPal ID):
+  - Sets `cancel_at_period_end=True`; access continues until `current_period_end`
+
+The billing page shows a "Cancel subscription" button with confirmation for users with active subscriptions. After cancellation, the data reloads.
+
 ### Provider abstraction
 
 `backend/app/services/payment_providers/`:
-- `base.py` — `PaymentProviderBase` ABC, `CheckoutResult`, `WebhookVerifyResult`
-- `paypal.py` — `PayPalProvider` (httpx-based, async); `create_subscription` requires explicit `paypal_plan_id`
+- `base.py` — `PaymentProviderBase` ABC, `CheckoutResult`, `WebhookVerifyResult`; abstract methods: `create_subscription`, `verify_webhook`, `cancel_subscription`
+- `paypal.py` — `PayPalProvider` (httpx-based, async); `create_subscription` requires explicit `paypal_plan_id`; `cancel_subscription` calls `/v1/billing/subscriptions/{id}/cancel`
 - `registry.py` — `get_paypal_provider()` factory (lru_cached, reads from Settings)
+
+### Sandbox test sequence
+
+1. User clicks **Pay with PayPal** → `POST /checkout/paypal` → `PaymentCheckoutSession(status=pending_activation)` created
+2. User approves on PayPal → redirected to `/billing/success`
+3. `/billing/success` polls `GET /me/subscription` — shows `payment_state_message=pending_activation`
+4. PayPal POSTs `BILLING.SUBSCRIPTION.ACTIVATED` → webhook creates `UserSubscription(status=active)` + marks checkout `activated`
+5. Next poll on success page detects `status=active` → shows green confirmation
 
 ### Running PayPal tests
 
@@ -659,7 +699,7 @@ cd backend
 pytest tests/test_paypal.py -v
 ```
 
-51 tests — no real PayPal credentials required. All HTTP calls are mocked.
+61 tests — no real PayPal credentials required. All HTTP calls are mocked.
 
 ### Payment integrations excluded
 

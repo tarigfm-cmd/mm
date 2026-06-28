@@ -296,6 +296,27 @@ Goal: Give platform admins visibility into PayPal configuration state without ex
 - [x] TypeScript check: zero errors
 - [x] DEVELOPMENT.md: complete numbered sandbox setup sequence (10 steps), webhook source-of-truth rule, config health endpoint docs, expanded sandbox test checklist
 
+## User-Facing Subscription Lifecycle — PayPal Pending / Active / Cancel Flow (Complete)
+
+Goal: Complete the user-facing subscription lifecycle so users can see their activation state, understand pending PayPal confirmation, and self-service cancel.
+
+- [x] `PaymentCheckoutSession` model — tracks checkout from initiation to activation; fields: user_id, plan_id, provider, external_subscription_id, checkout_url, status (pending_activation → activated/cancelled/expired), created_at, completed_at
+- [x] Migration 011 — `payment_checkout_sessions` table
+- [x] `POST /checkout/paypal` — now creates `PaymentCheckoutSession(status=pending_activation)` after successful PayPal subscription creation
+- [x] Webhook ACTIVATED critical fix — when no `UserSubscription` exists (brand-new subscriber), looks up `PaymentCheckoutSession` by `external_subscription_id`, creates `UserSubscription(status=active)`, marks checkout `activated`
+- [x] Webhook ACTIVATED — also marks existing `PaymentCheckoutSession` as activated when existing sub found by external ID
+- [x] `GET /api/billing/me/subscription` — now returns `pending_checkout` (provider, plan_code, status, external ID hint) and `payment_state_message` (free | active | pending_activation | past_due | canceled | expired)
+- [x] `POST /api/billing/me/subscription/cancel` — PayPal subscriptions: calls `PayPalProvider.cancel_subscription()` (503 if not configured); manual subscriptions: sets `cancel_at_period_end=True`
+- [x] `PayPalProvider.cancel_subscription(external_id, reason)` — calls `/v1/billing/subscriptions/{id}/cancel`; `cancel_subscription` added to `PaymentProviderBase` ABC
+- [x] `PendingCheckoutRead`, `CancelSubscriptionResponse` schemas; `UserSubscriptionWithFallback` extended with `pending_checkout` and `payment_state_message`
+- [x] `BillingPage` — pending activation banner, payment state badge, period dates, cancel_at_period_end warning, cancel button with confirmation dialog
+- [x] `PayPalSuccessPage` — auto-polls up to 8× (every 4 s), refresh button, pending vs active messaging; never activates client-side
+- [x] `billingApi.cancelMySubscription()` added; `PendingCheckoutRead`, `CancelSubscriptionResponse` TypeScript types added
+- [x] 10 new backend tests — checkout creates session, pending visible in subscription, success redirect does not activate, ACTIVATED creates sub for new subscriber, ACTIVATED marks checkout activated, manual cancel sets cancel_at_period_end, no-sub 404, PayPal not configured 503, PayPal configured calls provider and sets canceled, cancel requires auth
+- [x] Full suite: **381/381** backend tests passing
+- [x] TypeScript check: zero errors
+- [x] DEVELOPMENT.md: pending checkout flow, success page polling, webhook new-subscriber fix, cancellation behavior, sandbox test sequence updated
+
 ## Phase 2 — Users & Auth (continued)
 
 Goal: Full user-facing auth and profile features.

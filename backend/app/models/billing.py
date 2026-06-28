@@ -26,6 +26,10 @@ SUBSCRIPTION_STATUSES = frozenset({
     "trialing", "active", "past_due", "canceled", "expired", "free",
 })
 
+CHECKOUT_SESSION_STATUSES = frozenset({
+    "started", "pending_activation", "activated", "cancelled", "expired", "failed",
+})
+
 USAGE_EVENT_TYPES = frozenset({
     "training_session_started",
     "training_session_completed",
@@ -35,6 +39,7 @@ USAGE_EVENT_TYPES = frozenset({
     "import_commit",
     "billing_checkout_started",
     "billing_webhook_received",
+    "billing_subscription_cancelled",
 })
 
 
@@ -153,6 +158,44 @@ class UsageEvent(Base):
     metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+
+class PaymentCheckoutSession(Base):
+    """Tracks a PayPal (or other provider) checkout session from initiation to activation."""
+    __tablename__ = "payment_checkout_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True, native_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True, native_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True, native_uuid=True),
+        ForeignKey("subscription_plans.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    external_subscription_id: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, index=True
+    )
+    checkout_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending_activation")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    plan: Mapped["SubscriptionPlan"] = relationship(
+        "SubscriptionPlan", foreign_keys=[plan_id], lazy="selectin"
     )
 
 

@@ -75,11 +75,29 @@ class UserSubscriptionRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PendingCheckoutRead(BaseModel):
+    """Safe view of a pending payment checkout session — no full external IDs."""
+    id: uuid.UUID
+    provider: str
+    plan_code: str
+    status: str
+    created_at: datetime
+    external_subscription_id_hint: Optional[str] = None
+
+
 class UserSubscriptionWithFallback(BaseModel):
     """Subscription info including a free-plan fallback for users with no explicit subscription."""
     subscription: Optional[UserSubscriptionRead]
     plan: SubscriptionPlanRead
     is_free_tier: bool
+    pending_checkout: Optional[PendingCheckoutRead] = None
+    payment_state_message: str = "free"
+
+
+class CancelSubscriptionResponse(BaseModel):
+    status: str
+    cancel_at_period_end: bool
+    message: str
 
 
 class UsageSummary(BaseModel):

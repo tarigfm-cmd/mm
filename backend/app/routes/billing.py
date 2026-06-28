@@ -12,14 +12,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.core.dependencies import get_current_user, require_superuser
 from app.database import get_db
-from app.models.billing import PaymentWebhookEvent, SubscriptionPlan, UserSubscription
+from app.models.billing import (
+    PaymentCheckoutSession,
+    PaymentWebhookEvent,
+    SubscriptionPlan,
+    UserSubscription,
+)
 from app.models.identity import User
 from app.schemas.billing import (
+    CancelSubscriptionResponse,
     MonthlyUsageResponse,
     PayPalCheckoutRequest,
     PayPalCheckoutResponse,
     PayPalConfigStatus,
     PayPalWebhookResponse,
+    PendingCheckoutRead,
     SubscriptionAssignRequest,
     SubscriptionPlanAdminRead,
     SubscriptionPlanRead,
@@ -66,12 +73,37 @@ async def list_plans(
     return [SubscriptionPlanRead.model_validate(r) for r in rows]
 
 
+def _pending_checkout_hint(external_id: Optional[str]) -> Optional[str]:
+    if not external_id:
+        return None
+    if len(external_id) > 8:
+        return f"{external_id[:4]}...{external_id[-4:]}"
+    return "***"
+
+
+def _payment_state_message(
+    sub: Optional[UserSubscription],
+    pending: Optional[PaymentCheckoutSession],
+) -> str:
+    if sub is not None and sub.status in ("active", "trialing"):
+        return "active"
+    if sub is not None and sub.status == "past_due":
+        return "past_due"
+    if sub is not None and sub.status == "canceled":
+        return "canceled"
+    if sub is not None and sub.status == "expired":
+        return "expired"
+    if pending is not None:
+        return "pending_activation"
+    return "free"
+
+
 @router.get("/me/subscription", response_model=UserSubscriptionWithFallback)
 async def get_my_subscription(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> UserSubscriptionWithFallback:
-    """Return the current user's subscription and effective plan (free fallback if none)."""
+    """Return the current user's subscription, effective plan, and any pending checkout."""
     sub = await get_user_current_subscription(db, current_user.id)
     plan = await get_effective_plan(db, current_user.id)
 
@@ -81,10 +113,37 @@ async def get_my_subscription(
             detail="No subscription plans found. Contact the platform administrator.",
         )
 
+    pending = (
+        await db.execute(
+            select(PaymentCheckoutSession)
+            .where(
+                PaymentCheckoutSession.user_id == current_user.id,
+                PaymentCheckoutSession.status == "pending_activation",
+            )
+            .order_by(PaymentCheckoutSession.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    pending_read: Optional[PendingCheckoutRead] = None
+    if pending is not None:
+        pending_read = PendingCheckoutRead(
+            id=pending.id,
+            provider=pending.provider,
+            plan_code=pending.plan.code,
+            status=pending.status,
+            created_at=pending.created_at,
+            external_subscription_id_hint=_pending_checkout_hint(
+                pending.external_subscription_id
+            ),
+        )
+
     return UserSubscriptionWithFallback(
         subscription=UserSubscriptionRead.model_validate(sub) if sub else None,
         plan=SubscriptionPlanRead.model_validate(plan),
         is_free_tier=sub is None,
+        pending_checkout=pending_read,
+        payment_state_message=_payment_state_message(sub, pending),
     )
 
 
@@ -110,6 +169,68 @@ async def get_my_usage(
         )
 
     return MonthlyUsageResponse(usage=usage_list, period_start=period_start)
+
+
+@router.post("/me/subscription/cancel", response_model=CancelSubscriptionResponse)
+async def cancel_my_subscription(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CancelSubscriptionResponse:
+    """Cancel the authenticated user's active subscription.
+
+    For PayPal subscriptions: calls the PayPal cancel API (requires PayPal configured).
+    For manual subscriptions: sets cancel_at_period_end=True.
+    """
+    sub = await get_user_current_subscription(db, current_user.id)
+    if sub is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active subscription to cancel.",
+        )
+
+    if sub.external_provider == "paypal" and sub.external_subscription_id:
+        provider = get_paypal_provider()
+        if not provider.is_configured():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Cancellation could not be sent to PayPal because PayPal is not "
+                    "configured in this environment. Contact your platform administrator."
+                ),
+            )
+        try:
+            await provider.cancel_subscription(
+                sub.external_subscription_id,
+                reason="Cancelled by user via platform",
+            )
+        except Exception as exc:
+            logger.error("PayPal subscription cancellation failed: %s", exc)
+            raise HTTPException(
+                status_code=502,
+                detail="PayPal cancellation request failed. Please try again later.",
+            )
+        sub.status = "canceled"
+        sub.cancel_at_period_end = False
+        message = "Subscription cancelled."
+    else:
+        sub.cancel_at_period_end = True
+        message = "Subscription cancellation scheduled at end of current period."
+
+    await db.commit()
+
+    await record_usage_event(
+        db,
+        user_id=current_user.id,
+        event_type="billing_subscription_cancelled",
+        metadata={"plan_code": sub.plan.code, "provider": sub.external_provider or "manual"},
+    )
+    await db.commit()
+
+    return CancelSubscriptionResponse(
+        status=sub.status,
+        cancel_at_period_end=sub.cancel_at_period_end,
+        message=message,
+    )
 
 
 @router.get("/admin/plans", response_model=list[SubscriptionPlanAdminRead])
@@ -294,12 +415,24 @@ async def paypal_checkout(
         logger.error("PayPal checkout failed: %s", exc)
         raise HTTPException(status_code=502, detail="PayPal service error. Try again later.")
 
+    checkout_session = PaymentCheckoutSession(
+        user_id=current_user.id,
+        plan_id=plan_row.id,
+        provider="paypal",
+        external_subscription_id=result.external_subscription_id,
+        checkout_url=result.checkout_url,
+        status="pending_activation",
+    )
+    db.add(checkout_session)
+
     await record_usage_event(
         db,
         user_id=current_user.id,
         event_type="billing_checkout_started",
         metadata={"plan_code": body.plan_code, "provider": "paypal"},
     )
+
+    await db.commit()
 
     return PayPalCheckoutResponse(
         checkout_url=result.checkout_url,
@@ -386,6 +519,68 @@ async def paypal_webhook(
                 user_sub.external_subscription_id = verify_result.external_subscription_id
             user_sub.external_provider = "paypal"
             webhook_event.processed_status = "processed"
+            # Mark any pending checkout session as activated
+            if new_sub_status == "active" and verify_result.external_subscription_id:
+                pending_cs = (
+                    await db.execute(
+                        select(PaymentCheckoutSession).where(
+                            PaymentCheckoutSession.external_subscription_id
+                            == verify_result.external_subscription_id,
+                            PaymentCheckoutSession.status == "pending_activation",
+                        ).limit(1)
+                    )
+                ).scalar_one_or_none()
+                if pending_cs is not None:
+                    pending_cs.status = "activated"
+                    pending_cs.completed_at = datetime.now(timezone.utc)
+        elif new_sub_status == "active":
+            # ACTIVATED for a brand-new subscriber: look up the pending checkout session
+            # to obtain user_id and plan_id, then create the UserSubscription.
+            checkout_session = (
+                await db.execute(
+                    select(PaymentCheckoutSession).where(
+                        PaymentCheckoutSession.external_subscription_id
+                        == verify_result.external_subscription_id,
+                        PaymentCheckoutSession.provider == "paypal",
+                    ).limit(1)
+                )
+            ).scalar_one_or_none()
+
+            if checkout_session is None and verify_result.custom_id:
+                # Fallback: find most recent pending checkout for this user
+                try:
+                    uid = uuid.UUID(verify_result.custom_id)
+                    checkout_session = (
+                        await db.execute(
+                            select(PaymentCheckoutSession).where(
+                                PaymentCheckoutSession.user_id == uid,
+                                PaymentCheckoutSession.status == "pending_activation",
+                                PaymentCheckoutSession.provider == "paypal",
+                            ).order_by(PaymentCheckoutSession.created_at.desc()).limit(1)
+                        )
+                    ).scalar_one_or_none()
+                except ValueError:
+                    pass
+
+            if checkout_session is not None:
+                new_sub = UserSubscription(
+                    user_id=checkout_session.user_id,
+                    plan_id=checkout_session.plan_id,
+                    status="active",
+                    external_provider="paypal",
+                    external_subscription_id=verify_result.external_subscription_id,
+                )
+                db.add(new_sub)
+                checkout_session.status = "activated"
+                checkout_session.completed_at = datetime.now(timezone.utc)
+                webhook_event.processed_status = "processed"
+            else:
+                webhook_event.processed_status = "unresolved"
+                processing_error = (
+                    f"Could not resolve subscription for external_id="
+                    f"{verify_result.external_subscription_id} custom_id={verify_result.custom_id}"
+                )
+                logger.warning("PayPal webhook unresolved: %s", processing_error)
         else:
             webhook_event.processed_status = "unresolved"
             processing_error = (

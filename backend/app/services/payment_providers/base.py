@@ -55,3 +55,11 @@ class PaymentProviderBase(ABC):
         raw_body: bytes,
     ) -> WebhookVerifyResult:
         """Verify the webhook signature and parse the event."""
+
+    @abstractmethod
+    async def cancel_subscription(
+        self,
+        external_subscription_id: str,
+        reason: str = "Cancelled by user",
+    ) -> None:
+        """Cancel an active subscription with the payment provider."""

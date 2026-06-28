@@ -13,7 +13,12 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.billing import PaymentWebhookEvent, SubscriptionPlan, UserSubscription
+from app.models.billing import (
+    PaymentCheckoutSession,
+    PaymentWebhookEvent,
+    SubscriptionPlan,
+    UserSubscription,
+)
 from app.models.identity import User
 from app.services.payment_providers.base import CheckoutResult, WebhookVerifyResult
 from app.services.payment_providers.paypal import PayPalProvider
@@ -1316,3 +1321,378 @@ def test_build_status_helper_live_env_produces_warning():
     )
     result = build_paypal_config_status(settings, [])
     assert any("live" in w.lower() for w in result.warnings)
+
+
+# ---------------------------------------------------------------------------
+# Checkout session lifecycle — PaymentCheckoutSession created on checkout
+# ---------------------------------------------------------------------------
+
+async def _create_checkout_session(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    plan: SubscriptionPlan,
+    external_sub_id: str = "SUB-SESS-1",
+    status: str = "pending_activation",
+) -> PaymentCheckoutSession:
+    cs = PaymentCheckoutSession(
+        user_id=user_id,
+        plan_id=plan.id,
+        provider="paypal",
+        external_subscription_id=external_sub_id,
+        checkout_url="https://paypal.com/approve",
+        status=status,
+    )
+    session.add(cs)
+    await session.commit()
+    await session.refresh(cs)
+    return cs
+
+
+@pytest.mark.asyncio
+async def test_checkout_creates_pending_session(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """Successful checkout must create a PaymentCheckoutSession with status=pending_activation."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s, with_paypal_plan_id=True)
+
+    token = await _register_login(client, VALID_USER)
+    provider = _mock_provider(configured=True, sub_id="SUB-NEW-123")
+
+    with patch("app.routes.billing.get_paypal_provider", return_value=provider):
+        r = await client.post(
+            "/api/billing/checkout/paypal",
+            json={"plan_code": "pro"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert r.status_code == 200
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        cs = (
+            await s.execute(
+                select(PaymentCheckoutSession).where(
+                    PaymentCheckoutSession.external_subscription_id == "SUB-NEW-123"
+                )
+            )
+        ).scalar_one_or_none()
+    assert cs is not None
+    assert cs.status == "pending_activation"
+    assert cs.provider == "paypal"
+
+
+@pytest.mark.asyncio
+async def test_me_subscription_shows_pending_checkout(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """GET /me/subscription must return pending_checkout and payment_state_message=pending_activation."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        plans = await _seed_plans(s)
+
+    token = await _register_login(client, VALID_USER)
+    r_me = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    user_id = uuid.UUID(r_me.json()["id"])
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        cs = PaymentCheckoutSession(
+            user_id=user_id,
+            plan_id=plans["pro"].id,
+            provider="paypal",
+            external_subscription_id="SUB-PENDING-1",
+            status="pending_activation",
+        )
+        s.add(cs)
+        await s.commit()
+
+    r = await client.get(
+        "/api/billing/me/subscription",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["payment_state_message"] == "pending_activation"
+    assert data["pending_checkout"] is not None
+    assert data["pending_checkout"]["provider"] == "paypal"
+    assert data["pending_checkout"]["status"] == "pending_activation"
+    assert data["pending_checkout"]["plan_code"] == "pro"
+
+
+@pytest.mark.asyncio
+async def test_success_redirect_does_not_activate_subscription(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """GET /me/subscription after PayPal redirect must NOT show an active subscription."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        plans = await _seed_plans(s)
+        pro_plan_id = plans["pro"].id
+
+    token = await _register_login(client, VALID_USER)
+    r_me = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    user_id = uuid.UUID(r_me.json()["id"])
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        cs = PaymentCheckoutSession(
+            user_id=user_id,
+            plan_id=pro_plan_id,
+            provider="paypal",
+            external_subscription_id="SUB-NO-ACT-1",
+            status="pending_activation",
+        )
+        s.add(cs)
+        await s.commit()
+
+    r = await client.get(
+        "/api/billing/me/subscription",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["subscription"] is None
+    assert data["is_free_tier"] is True
+    assert data["payment_state_message"] == "pending_activation"
+
+
+@pytest.mark.asyncio
+async def test_webhook_activated_creates_subscription_for_new_subscriber(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """BILLING.SUBSCRIPTION.ACTIVATED must create UserSubscription when none exists."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        plans = await _seed_plans(s)
+        pro_plan_id = plans["pro"].id
+
+    token = await _register_login(client, VALID_USER)
+    r_me = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    user_id = uuid.UUID(r_me.json()["id"])
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        cs = PaymentCheckoutSession(
+            user_id=user_id,
+            plan_id=pro_plan_id,
+            provider="paypal",
+            external_subscription_id="SUB-BRAND-NEW-1",
+            status="pending_activation",
+        )
+        s.add(cs)
+        await s.commit()
+        cs_id = cs.id
+
+    verify = _verified_result(
+        event_type="BILLING.SUBSCRIPTION.ACTIVATED",
+        event_id="EVT-NEW-SUB-1",
+        resource_id="SUB-BRAND-NEW-1",
+    )
+    provider = _mock_provider(verify_result=verify)
+
+    with patch("app.routes.billing.get_paypal_provider", return_value=provider):
+        r = await client.post(
+            "/api/billing/webhooks/paypal",
+            content=_webhook_body("BILLING.SUBSCRIPTION.ACTIVATED", "EVT-NEW-SUB-1"),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert r.status_code == 200
+    assert r.json()["status"] == "processed"
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        sub = (
+            await s.execute(
+                select(UserSubscription).where(
+                    UserSubscription.user_id == user_id,
+                    UserSubscription.external_subscription_id == "SUB-BRAND-NEW-1",
+                )
+            )
+        ).scalar_one_or_none()
+        cs_updated = await s.get(PaymentCheckoutSession, cs_id)
+
+    assert sub is not None
+    assert sub.status == "active"
+    assert sub.external_provider == "paypal"
+    assert cs_updated.status == "activated"
+    assert cs_updated.completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_webhook_activated_marks_existing_checkout_activated(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """When ACTIVATED matches an existing UserSubscription, the checkout session must be marked activated."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        plans = await _seed_plans(s)
+        user_id = uuid.uuid4()
+        user = User(
+            id=user_id, email="pp_cs_mark@example.com", username="ppcsmk",
+            full_name="CS Mark", hashed_password="x",
+        )
+        s.add(user)
+        sub = UserSubscription(
+            user_id=user_id, plan_id=plans["pro"].id, status="trialing",
+            external_provider="paypal", external_subscription_id="SUB-MARK-1",
+        )
+        s.add(sub)
+        cs = PaymentCheckoutSession(
+            user_id=user_id, plan_id=plans["pro"].id, provider="paypal",
+            external_subscription_id="SUB-MARK-1", status="pending_activation",
+        )
+        s.add(cs)
+        await s.commit()
+        sub_id = sub.id
+        cs_id = cs.id
+
+    verify = _verified_result(
+        event_type="BILLING.SUBSCRIPTION.ACTIVATED",
+        event_id="EVT-MARK-1",
+        resource_id="SUB-MARK-1",
+    )
+    provider = _mock_provider(verify_result=verify)
+
+    with patch("app.routes.billing.get_paypal_provider", return_value=provider):
+        r = await client.post(
+            "/api/billing/webhooks/paypal",
+            content=_webhook_body("BILLING.SUBSCRIPTION.ACTIVATED", "EVT-MARK-1"),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert r.status_code == 200
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        updated_sub = await s.get(UserSubscription, sub_id)
+        updated_cs = await s.get(PaymentCheckoutSession, cs_id)
+
+    assert updated_sub.status == "active"
+    assert updated_cs.status == "activated"
+
+
+# ---------------------------------------------------------------------------
+# POST /api/billing/me/subscription/cancel
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_cancel_manual_subscription_sets_cancel_at_period_end(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """Cancelling a manual subscription must set cancel_at_period_end=True."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        plans = await _seed_plans(s)
+
+    admin_token = await _create_pp_admin_token(client, fresh_engine)
+    r_me = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {admin_token}"})
+    admin_id = uuid.UUID(r_me.json()["id"])
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        sub = UserSubscription(
+            user_id=admin_id, plan_id=plans["pro"].id, status="active",
+            external_provider=None, external_subscription_id=None,
+        )
+        s.add(sub)
+        await s.commit()
+        sub_id = sub.id
+
+    r = await client.post(
+        "/api/billing/me/subscription/cancel",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["cancel_at_period_end"] is True
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        updated = await s.get(UserSubscription, sub_id)
+    assert updated.cancel_at_period_end is True
+    assert updated.status == "active"
+
+
+@pytest.mark.asyncio
+async def test_cancel_no_subscription_returns_404(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """Cancelling with no active subscription must return 404."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s)
+
+    token = await _register_login(client, VALID_USER)
+    r = await client.post(
+        "/api/billing/me/subscription/cancel",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_cancel_paypal_not_configured_returns_503(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """Cancelling a PayPal subscription when provider is not configured must return 503."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        plans = await _seed_plans(s)
+
+    token = await _register_login(client, VALID_USER)
+    r_me = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    user_id = uuid.UUID(r_me.json()["id"])
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        sub = UserSubscription(
+            user_id=user_id, plan_id=plans["pro"].id, status="active",
+            external_provider="paypal", external_subscription_id="SUB-CANC-PP-1",
+        )
+        s.add(sub)
+        await s.commit()
+
+    provider = _mock_provider(configured=False)
+    with patch("app.routes.billing.get_paypal_provider", return_value=provider):
+        r = await client.post(
+            "/api/billing/me/subscription/cancel",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert r.status_code == 503
+    assert "paypal" in r.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_cancel_paypal_configured_calls_provider_and_sets_canceled(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """Cancelling a PayPal subscription when configured must call provider and set status=canceled."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        plans = await _seed_plans(s)
+
+    token = await _register_login(client, VALID_USER)
+    r_me = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    user_id = uuid.UUID(r_me.json()["id"])
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        sub = UserSubscription(
+            user_id=user_id, plan_id=plans["pro"].id, status="active",
+            external_provider="paypal", external_subscription_id="SUB-CANC-PP-2",
+        )
+        s.add(sub)
+        await s.commit()
+        sub_id = sub.id
+
+    provider = _mock_provider(configured=True)
+    provider.cancel_subscription = AsyncMock(return_value=None)
+
+    with patch("app.routes.billing.get_paypal_provider", return_value=provider):
+        r = await client.post(
+            "/api/billing/me/subscription/cancel",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "canceled"
+    assert data["cancel_at_period_end"] is False
+
+    provider.cancel_subscription.assert_called_once_with(
+        "SUB-CANC-PP-2", reason="Cancelled by user via platform"
+    )
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        updated = await s.get(UserSubscription, sub_id)
+    assert updated.status == "canceled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_requires_auth(client: AsyncClient, fresh_engine: Any) -> None:
+    """Cancel endpoint must require authentication."""
+    r = await client.post("/api/billing/me/subscription/cancel")
+    assert r.status_code in (401, 403)

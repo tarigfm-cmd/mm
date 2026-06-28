@@ -6,6 +6,7 @@ import axios from 'axios'
 import { useAppStore } from '@/store/appStore'
 import { getRefreshToken, setStoredRefreshToken } from '@/services/api'
 import type {
+  CancelSubscriptionResponse,
   MonthlyUsageResponse,
   PayPalCheckoutResponse,
   PayPalConfigStatus,
@@ -136,6 +137,13 @@ export const billingApi = {
   adminGetPayPalStatus: async (): Promise<PayPalConfigStatus> => {
     const { data } = await billingHttp.get<PayPalConfigStatus>(
       '/api/billing/admin/paypal/status',
+    )
+    return data
+  },
+
+  cancelMySubscription: async (): Promise<CancelSubscriptionResponse> => {
+    const { data } = await billingHttp.post<CancelSubscriptionResponse>(
+      '/api/billing/me/subscription/cancel',
     )
     return data
   },

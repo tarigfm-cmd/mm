@@ -271,6 +271,27 @@ class PayPalProvider(PaymentProviderBase):
             payload_summary=payload_summary,
         )
 
+    async def cancel_subscription(
+        self,
+        external_subscription_id: str,
+        reason: str = "Cancelled by user",
+    ) -> None:
+        """Cancel a PayPal subscription via the Subscriptions API."""
+        self._require_configured()
+        token = await self._get_access_token()
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{self._base_url}/v1/billing/subscriptions/{external_subscription_id}/cancel",
+                json={"reason": reason},
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                timeout=30,
+            )
+            if resp.status_code not in (200, 204):
+                resp.raise_for_status()
+
     @classmethod
     def event_to_subscription_status(cls, event_type: Optional[str]) -> Optional[str]:
         """Map a PayPal event type to an internal subscription status, or None."""
