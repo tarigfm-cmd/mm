@@ -21,6 +21,7 @@ import type {
   SystemRole,
   TokenResponse,
   UserRead,
+  UserUpdate,
 } from '@/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -167,6 +168,11 @@ export const authApi = {
   me: async (): Promise<UserRead> => {
     const { data } = await http.get<UserRead>('/api/auth/me')
     return data
+  },
+
+  updateMe: async (data: UserUpdate): Promise<UserRead> => {
+    const { data: user } = await http.patch<UserRead>('/api/auth/me', data)
+    return user
   },
 
   logout: async (): Promise<void> => {

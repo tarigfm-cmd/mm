@@ -110,7 +110,7 @@ Goal: Close gaps discovered after the initial admin UI build — real data every
 - [x] 26 new backend tests in `test_admin_ui_stabilization.py`; full suite 243/243 passing
 - [x] TypeScript check: zero errors
 
-## Interactive Training Engine — Phase 2 (Current)
+## Interactive Training Engine — Phase 2 (Complete)
 
 Goal: Make training feel like real community pharmacy practice — step-based flow, multi-dimensional scoring, dimension feedback, post-submission reveal, and richer progress analytics.
 
@@ -131,6 +131,36 @@ Goal: Make training feel like real community pharmacy practice — step-based fl
 - [x] 25 new backend tests in `test_training_engine.py`; full suite 293/293 passing
 - [x] TypeScript check: zero errors
 - [x] CONTENT_GOVERNANCE.md, DEVELOPMENT.md, ROADMAP.md updated
+
+## Interactive Training Engine Stabilization Gate (Complete)
+
+Goal: Harden engine correctness, close REVEAL_KEYS drift risk, add boundary tests.
+
+- [x] `learn.py` imports `REVEAL_KEYS` directly from `training_engine.py` — single source of truth
+- [x] `_DIM_TO_TYPE` dict covers all 8 dimensions for `recommended_next_content_type` (was missing 3)
+- [x] `strongest_dimension` computed from full `dimension_breakdown`, not just dimensions with failures (was returning None when all fail-rates were 0)
+- [x] 5 new edge-case tests: invalid region code 422, empty progress state, simulation flow + scoring, pinned-version submit
+- [x] 298/298 backend tests passing
+- [x] TypeScript check: zero errors
+- [x] CONTENT_GOVERNANCE.md updated with pinned-version behaviour + known limitations
+
+## Auth UX Completion + Account Experience (Complete)
+
+Goal: Complete, secure, user-friendly authentication flow. Any new learner or admin can register, log in, view/update their profile, and be redirected correctly throughout the app.
+
+- [x] `LoginPage` — inline error banner (401 suppressed by response interceptor — shown explicitly here), clears on field edit, forgot-password note
+- [x] `LoginPage` — post-login redirect to `location.state.from` or `/learn/content`; already-authed users redirect to `/learn/content`
+- [x] `RegisterPage` — confirm-password field with match validation; inline submit-error banner for server failures
+- [x] `RegisterPage` — post-register auto-login + redirect to `/learn/content`
+- [x] `ProtectedRoute` — preserves attempted URL as `state={{ from: location.pathname + location.search }}` on redirect to `/login`
+- [x] `ProfilePage` (`/profile`) — avatar, user info (email, username, full_name, account status, member since), edit form (full_name + username), logout button
+- [x] `authApi.updateMe(data)` — `PATCH /api/auth/me`; updates Zustand `currentUser` on success
+- [x] `UserUpdate` interface added to `types/index.ts`
+- [x] Navigation user section — clicking user name/avatar navigates to `/profile`; logout button moved below as labelled row
+- [x] `/profile` lazy route added to `App.tsx` under `ProtectedRoute`
+- [x] No backend changes required (all endpoints already existed)
+- [x] TypeScript check: zero errors
+- [x] DEVELOPMENT.md updated with auth flow reference table
 
 ## Learner-Facing Published Content Experience — Phase 1 (Complete)
 

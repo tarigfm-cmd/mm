@@ -194,6 +194,42 @@ In development the app auto-creates tables via `Base.metadata.create_all` on sta
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for module boundary conventions.
 
+## Auth Flow
+
+### Frontend auth pages
+
+| URL | Page |
+|-----|------|
+| `/login` | LoginPage — email + password, inline error, return-URL redirect |
+| `/register` | RegisterPage — email, username, full name, password + confirm-password |
+| `/profile` | ProfilePage — view/edit full name + username, account status, logout |
+
+### Token storage
+
+| Token | Storage | Notes |
+|-------|---------|-------|
+| Access token | Zustand memory store | Never written to localStorage or cookies |
+| Refresh token | localStorage `pharmlearn_rt` | Rotated on every use; revoked on logout |
+
+### Key behaviours
+
+- After login or register, users land on `/learn/content` (or the originally requested URL for guarded pages).
+- `ProtectedRoute` preserves the attempted URL as `state.from` and `LoginPage` reads it after sign-in.
+- 401 responses from non-auth endpoints silently trigger a background token refresh; if refresh fails, the user is redirected to `/login`.
+- Login errors (wrong credentials → 401) are shown as inline form errors — not toasts — because the response interceptor suppresses 401 toasts.
+- Logout calls `POST /api/auth/logout` (best-effort) to revoke the server-side refresh token, then clears Zustand and localStorage.
+
+### Auth API methods (`authApi` in `api.ts`)
+
+| Method | Endpoint | Notes |
+|--------|----------|-------|
+| `login(credentials)` | `POST /api/auth/login` | Stores both tokens |
+| `register(data)` | `POST /api/auth/register` | Returns `UserRead`; auto-login in UI |
+| `me()` | `GET /api/auth/me` | Returns current `UserRead` |
+| `updateMe(data)` | `PATCH /api/auth/me` | `{full_name?, username?}` |
+| `logout()` | `POST /api/auth/logout` | Best-effort server revoke |
+| `refresh(rt)` | `POST /api/auth/refresh` | Used by `useAuthInit` hook |
+
 ## Admin Governance UI
 
 The content governance section lives at `/admin/governance` and is guarded by `is_superuser`.

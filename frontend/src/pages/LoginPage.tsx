@@ -1,34 +1,44 @@
 import { useState } from 'react'
-import { Link, useNavigate, Navigate } from 'react-router-dom'
-import { AcademicCapIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
+import { Link, useNavigate, useLocation, Navigate } from 'react-router-dom'
+import { AcademicCapIcon, EyeIcon, EyeSlashIcon, ExclamationCircleIcon } from '@heroicons/react/24/outline'
 import { authApi } from '@/services/api'
 import { useAppStore } from '@/store/appStore'
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { currentUser, authInitialized, setCurrentUser } = useAppStore()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   if (authInitialized && currentUser) {
-    return <Navigate to="/" replace />
+    return <Navigate to="/learn/content" replace />
   }
+
+  const from = (location.state as { from?: string } | null)?.from || '/learn/content'
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!email.trim() || !password) return
 
+    setError(null)
     setLoading(true)
     try {
       await authApi.login({ email: email.trim(), password })
       const user = await authApi.me()
       setCurrentUser(user)
-      navigate('/', { replace: true })
-    } catch {
-      // toast shown by interceptor
+      navigate(from, { replace: true })
+    } catch (err) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      if (typeof detail === 'string') {
+        setError(detail)
+      } else {
+        setError('Invalid email or password.')
+      }
     } finally {
       setLoading(false)
     }
@@ -51,6 +61,13 @@ export default function LoginPage() {
           <h2 className="text-xl font-semibold text-gray-900 mb-1">Welcome back</h2>
           <p className="text-sm text-gray-500 mb-6">Sign in to continue your clinical training</p>
 
+          {error && (
+            <div className="mb-4 flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+              <ExclamationCircleIcon className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">
@@ -61,7 +78,7 @@ export default function LoginPage() {
                 required
                 autoComplete="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => { setEmail(e.target.value); setError(null) }}
                 placeholder="you@example.com"
                 className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
               />
@@ -77,7 +94,7 @@ export default function LoginPage() {
                   required
                   autoComplete="current-password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => { setPassword(e.target.value); setError(null) }}
                   placeholder="••••••••"
                   className="w-full px-3 py-2.5 pr-10 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
@@ -92,6 +109,9 @@ export default function LoginPage() {
                     : <EyeIcon className="w-4 h-4" />}
                 </button>
               </div>
+              <p className="mt-1 text-xs text-gray-400">
+                Forgot your password? Contact your administrator.
+              </p>
             </div>
 
             <button

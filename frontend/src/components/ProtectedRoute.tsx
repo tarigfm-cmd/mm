@@ -1,10 +1,11 @@
-import { Navigate, Outlet } from 'react-router-dom'
+import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useAppStore } from '@/store/appStore'
 import Navigation from '@/components/Navigation'
 import LoadingSpinner from '@/components/LoadingSpinner'
 
 export default function ProtectedRoute() {
   const { currentUser, authInitialized } = useAppStore()
+  const location = useLocation()
 
   if (!authInitialized) {
     return (
@@ -15,7 +16,7 @@ export default function ProtectedRoute() {
   }
 
   if (!currentUser) {
-    return <Navigate to="/login" replace />
+    return <Navigate to="/login" state={{ from: location.pathname + location.search }} replace />
   }
 
   return (

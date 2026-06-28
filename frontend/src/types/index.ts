@@ -116,6 +116,11 @@ export interface RegisterRequest {
   full_name?: string
 }
 
+export interface UserUpdate {
+  full_name?: string | null
+  username?: string
+}
+
 // ── Organizations ──────────────────────────────────────────────────────────────
 
 export type OrgType =

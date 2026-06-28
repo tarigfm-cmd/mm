@@ -1,4 +1,4 @@
-import { useNavigate, NavLink } from 'react-router-dom'
+import { useNavigate, NavLink, Link } from 'react-router-dom'
 import {
   HomeIcon,
   ArrowUpTrayIcon,
@@ -10,6 +10,7 @@ import {
   ArrowRightStartOnRectangleIcon,
   BookOpenIcon,
   TrophyIcon,
+  UserCircleIcon,
 } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
 import { authApi } from '@/services/api'
@@ -113,20 +114,26 @@ export default function Navigation() {
 
       {/* User section */}
       <div className="px-4 py-4 border-t border-gray-100">
-        <div className="flex items-center gap-3 px-2 py-2 rounded-lg">
+        <Link
+          to="/profile"
+          className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-gray-50 transition-colors"
+          title="My profile"
+        >
           <UserAvatar name={displayName} />
           <div className="flex-1 min-w-0">
             <p className="text-xs font-medium text-gray-900 truncate">{displayName}</p>
             <p className="text-xs text-gray-400 truncate">{currentUser?.email}</p>
           </div>
-          <button
-            onClick={handleLogout}
-            title="Sign out"
-            className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
-          >
-            <ArrowRightStartOnRectangleIcon className="w-4 h-4" />
-          </button>
-        </div>
+          <UserCircleIcon className="w-4 h-4 text-gray-400 flex-shrink-0" />
+        </Link>
+        <button
+          onClick={handleLogout}
+          title="Sign out"
+          className="mt-1 w-full flex items-center gap-2 px-2 py-1.5 text-xs text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+        >
+          <ArrowRightStartOnRectangleIcon className="w-3.5 h-3.5" />
+          Sign out
+        </button>
       </div>
     </nav>
   )

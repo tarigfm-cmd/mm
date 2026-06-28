@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate, Navigate } from 'react-router-dom'
-import { AcademicCapIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
+import { AcademicCapIcon, EyeIcon, EyeSlashIcon, ExclamationCircleIcon } from '@heroicons/react/24/outline'
 import { authApi } from '@/services/api'
 import { useAppStore } from '@/store/appStore'
 
@@ -8,6 +8,7 @@ interface FieldErrors {
   email?: string
   username?: string
   password?: string
+  confirmPassword?: string
   full_name?: string
 }
 
@@ -19,12 +20,15 @@ export default function RegisterPage() {
   const [email, setEmail] = useState('')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
   const [loading, setLoading] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
+  const [submitError, setSubmitError] = useState<string | null>(null)
 
   if (authInitialized && currentUser) {
-    return <Navigate to="/" replace />
+    return <Navigate to="/learn/content" replace />
   }
 
   const validate = (): boolean => {
@@ -34,6 +38,7 @@ export default function RegisterPage() {
     if (password.length < 8) errors.password = 'At least 8 characters.'
     if (!/[A-Z]/.test(password)) errors.password = 'Must include an uppercase letter.'
     if (!/[0-9]/.test(password)) errors.password = 'Must include a digit.'
+    if (password !== confirmPassword) errors.confirmPassword = 'Passwords do not match.'
     setFieldErrors(errors)
     return Object.keys(errors).length === 0
   }
@@ -42,6 +47,7 @@ export default function RegisterPage() {
     e.preventDefault()
     if (!validate()) return
 
+    setSubmitError(null)
     setLoading(true)
     try {
       await authApi.register({
@@ -54,9 +60,16 @@ export default function RegisterPage() {
       await authApi.login({ email: email.trim(), password })
       const user = await authApi.me()
       setCurrentUser(user)
-      navigate('/', { replace: true })
-    } catch {
-      // toast shown by interceptor
+      navigate('/learn/content', { replace: true })
+    } catch (err) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      if (typeof detail === 'string') {
+        setSubmitError(detail)
+      } else if (Array.isArray(detail) && detail.length > 0) {
+        setSubmitError((detail[0] as { msg?: string })?.msg ?? 'Registration failed.')
+      } else {
+        setSubmitError('Registration failed. Please try again.')
+      }
     } finally {
       setLoading(false)
     }
@@ -78,6 +91,13 @@ export default function RegisterPage() {
         <div className="bg-white rounded-2xl shadow-xl p-8">
           <h2 className="text-xl font-semibold text-gray-900 mb-1">Create your account</h2>
           <p className="text-sm text-gray-500 mb-6">Join thousands of pharmacy professionals</p>
+
+          {submitError && (
+            <div className="mb-4 flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+              <ExclamationCircleIcon className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>{submitError}</span>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -103,7 +123,7 @@ export default function RegisterPage() {
                 required
                 autoComplete="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => { setEmail(e.target.value); setSubmitError(null) }}
                 placeholder="you@example.com"
                 className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
               />
@@ -157,9 +177,39 @@ export default function RegisterPage() {
               )}
             </div>
 
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Confirm password <span className="text-red-500">*</span>
+              </label>
+              <div className="relative">
+                <input
+                  type={showConfirm ? 'text' : 'password'}
+                  required
+                  autoComplete="new-password"
+                  value={confirmPassword}
+                  onChange={(e) => { setConfirmPassword(e.target.value); setFieldErrors((f) => ({ ...f, confirmPassword: undefined })) }}
+                  placeholder="Re-enter your password"
+                  className={`w-full px-3 py-2.5 pr-10 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent ${fieldErrors.confirmPassword ? 'border-red-400' : 'border-gray-300'}`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirm((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  tabIndex={-1}
+                >
+                  {showConfirm
+                    ? <EyeSlashIcon className="w-4 h-4" />
+                    : <EyeIcon className="w-4 h-4" />}
+                </button>
+              </div>
+              {fieldErrors.confirmPassword && (
+                <p className="mt-1 text-xs text-red-500">{fieldErrors.confirmPassword}</p>
+              )}
+            </div>
+
             <button
               type="submit"
-              disabled={loading || !email.trim() || !username.trim() || !password}
+              disabled={loading || !email.trim() || !username.trim() || !password || !confirmPassword}
               className="w-full py-2.5 bg-primary-600 text-white font-medium text-sm rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
             >
               {loading ? 'Creating account…' : 'Create account'}
