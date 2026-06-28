@@ -3,7 +3,10 @@ import toast from 'react-hot-toast'
 import { useAppStore } from '@/store/appStore'
 import type {
   AddMemberRequest,
+  ChangePasswordRequest,
   CreateOrgRequest,
+  ForgotPasswordRequest,
+  ForgotPasswordResponse,
   GenerateScenarioRequest,
   Interaction,
   LoginRequest,
@@ -12,8 +15,10 @@ import type {
   Member,
   Organization,
   OrgWithRole,
+  PasswordChangeResponse,
   ProgressSummary,
   RegisterRequest,
+  ResetPasswordRequest,
   Scenario,
   ScenarioInteractionsResponse,
   ScenarioListResponse,
@@ -186,6 +191,30 @@ export const authApi = {
     }
     useAppStore.getState().clearAuth()
     clearStoredRefreshToken()
+  },
+
+  forgotPassword: async (data: ForgotPasswordRequest): Promise<ForgotPasswordResponse> => {
+    const { data: result } = await http.post<ForgotPasswordResponse>(
+      '/api/auth/forgot-password',
+      data,
+    )
+    return result
+  },
+
+  resetPassword: async (data: ResetPasswordRequest): Promise<PasswordChangeResponse> => {
+    const { data: result } = await http.post<PasswordChangeResponse>(
+      '/api/auth/reset-password',
+      data,
+    )
+    return result
+  },
+
+  changePassword: async (data: ChangePasswordRequest): Promise<PasswordChangeResponse> => {
+    const { data: result } = await http.post<PasswordChangeResponse>(
+      '/api/auth/change-password',
+      data,
+    )
+    return result
   },
 }
 

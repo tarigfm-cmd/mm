@@ -7,6 +7,9 @@ import {
   XMarkIcon,
   ArrowRightStartOnRectangleIcon,
   CreditCardIcon,
+  LockClosedIcon,
+  EyeIcon,
+  EyeSlashIcon,
 } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
 import { authApi } from '@/services/api'
@@ -31,6 +34,16 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<{ username?: string }>({})
   const [plan, setPlan] = useState<SubscriptionPlanRead | null>(null)
+
+  const [changingPassword, setChangingPassword] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showCurrent, setShowCurrent] = useState(false)
+  const [showNew, setShowNew] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
+  const [pwSaving, setPwSaving] = useState(false)
+  const [pwError, setPwError] = useState<string | null>(null)
 
   useEffect(() => {
     billingApi
@@ -77,6 +90,38 @@ export default function ProfilePage() {
     }
   }
 
+  const resetPasswordForm = () => {
+    setCurrentPassword('')
+    setNewPassword('')
+    setConfirmPassword('')
+    setShowCurrent(false)
+    setShowNew(false)
+    setShowConfirm(false)
+    setPwError(null)
+  }
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (newPassword.length < 8) { setPwError('New password must be at least 8 characters.'); return }
+    if (!/[A-Z]/.test(newPassword)) { setPwError('New password must include an uppercase letter.'); return }
+    if (!/[0-9]/.test(newPassword)) { setPwError('New password must include a digit.'); return }
+    if (newPassword !== confirmPassword) { setPwError('Passwords do not match.'); return }
+
+    setPwError(null)
+    setPwSaving(true)
+    try {
+      const result = await authApi.changePassword({ current_password: currentPassword, new_password: newPassword })
+      toast.success(result.message)
+      setChangingPassword(false)
+      resetPasswordForm()
+    } catch (err) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      setPwError(typeof detail === 'string' ? detail : 'Failed to change password.')
+    } finally {
+      setPwSaving(false)
+    }
+  }
+
   const handleLogout = async () => {
     await authApi.logout()
     toast.success('Signed out.')
@@ -86,8 +131,8 @@ export default function ProfilePage() {
   const displayName = currentUser.full_name || currentUser.username
 
   return (
-    <div className="max-w-xl">
-      <div className="flex items-center gap-3 mb-6">
+    <div className="max-w-xl space-y-6">
+      <div className="flex items-center gap-3">
         <UserCircleIcon className="w-7 h-7 text-primary-600" />
         <h1 className="text-xl font-semibold text-gray-900">My Profile</h1>
       </div>
@@ -213,6 +258,95 @@ export default function ProfilePage() {
             </>
           )}
         </div>
+      </div>
+
+      {/* Change password card */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <button
+          onClick={() => {
+            if (changingPassword) { resetPasswordForm() }
+            setChangingPassword((v) => !v)
+          }}
+          className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-gray-50 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <LockClosedIcon className="w-5 h-5 text-gray-500" />
+            <span className="text-sm font-medium text-gray-900">Change password</span>
+          </div>
+          <span className="text-xs text-primary-600">{changingPassword ? 'Cancel' : 'Update'}</span>
+        </button>
+
+        {changingPassword && (
+          <form onSubmit={handleChangePassword} className="px-6 pb-6 space-y-4 border-t border-gray-100">
+            <div className="pt-4">
+              {pwError && (
+                <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  {pwError}
+                </div>
+              )}
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Current password</label>
+                  <div className="relative">
+                    <input
+                      type={showCurrent ? 'text' : 'password'}
+                      required
+                      autoComplete="current-password"
+                      value={currentPassword}
+                      onChange={(e) => { setCurrentPassword(e.target.value); setPwError(null) }}
+                      className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    />
+                    <button type="button" onClick={() => setShowCurrent((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600" tabIndex={-1}>
+                      {showCurrent ? <EyeSlashIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">New password</label>
+                  <div className="relative">
+                    <input
+                      type={showNew ? 'text' : 'password'}
+                      required
+                      autoComplete="new-password"
+                      value={newPassword}
+                      onChange={(e) => { setNewPassword(e.target.value); setPwError(null) }}
+                      placeholder="Min. 8 chars, 1 uppercase, 1 digit"
+                      className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    />
+                    <button type="button" onClick={() => setShowNew((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600" tabIndex={-1}>
+                      {showNew ? <EyeSlashIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Confirm new password</label>
+                  <div className="relative">
+                    <input
+                      type={showConfirm ? 'text' : 'password'}
+                      required
+                      autoComplete="new-password"
+                      value={confirmPassword}
+                      onChange={(e) => { setConfirmPassword(e.target.value); setPwError(null) }}
+                      placeholder="Re-enter your new password"
+                      className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    />
+                    <button type="button" onClick={() => setShowConfirm((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600" tabIndex={-1}>
+                      {showConfirm ? <EyeSlashIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <button
+              type="submit"
+              disabled={pwSaving || !currentPassword || !newPassword || !confirmPassword}
+              className="flex items-center gap-1.5 px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
+            >
+              <CheckIcon className="w-4 h-4" />
+              {pwSaving ? 'Saving…' : 'Update password'}
+            </button>
+          </form>
+        )}
       </div>
     </div>
   )

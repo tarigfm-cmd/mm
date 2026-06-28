@@ -330,12 +330,37 @@ Goal: Complete the user-facing subscription lifecycle so users can see their act
 - [x] TypeScript check: zero errors (no frontend changes required — types already supported period dates)
 - [x] DEVELOPMENT.md: event table updated with period date column, sandbox sequence updated with renewal step
 
+## Auth Security Phase 2 — Password Reset + Change Password (Complete)
+
+Goal: Secure, no-SMTP password reset flow and authenticated password change with token-based DB tracking.
+
+- [x] `PasswordResetToken` model — `id`, `user_id` (FK CASCADE), `token_hash` (SHA-256, indexed unique), `expires_at` (60 min), `used_at`, `created_at`, `request_ip`, `user_agent`; raw token never stored
+- [x] `_validate_password_strength` — min 8 chars, 1 uppercase, 1 digit; shared by `ResetPasswordRequest` and `ChangePasswordRequest` schemas
+- [x] `POST /api/auth/forgot-password` — always generic response (no email enumeration); latest-only policy (deletes unused previous tokens); returns `reset_url` only when `expose_reset_token_in_dev=True`
+- [x] `POST /api/auth/reset-password` — SHA-256 hash lookup; expiry/used-at check (SQLite-safe naive datetime comparison); marks `used_at`, revokes all refresh tokens; enforces password rules
+- [x] `POST /api/auth/change-password` — authenticated; verifies `current_password`; rejects same-as-current; enforces rules; revokes all refresh tokens
+- [x] Config settings: `password_reset_token_expire_minutes = 60`, `expose_reset_token_in_dev = False`
+- [x] Alembic migration `012` — `password_reset_tokens` table
+- [x] `ForgotPasswordRequest`, `ForgotPasswordResponse`, `ResetPasswordRequest`, `ChangePasswordRequest`, `PasswordChangeResponse` schemas in `schemas/identity.py`
+- [x] 14 new backend tests — token creation, generic response for unknown user, dev flag returns URL, latest-only policy, valid/expired/used/invalid token reset, refresh token revocation on reset, correct/wrong/same-as-current change password, auth required
+- [x] Full suite: **405/405** backend tests passing
+- [x] `ForgotPasswordRequest`, `ForgotPasswordResponse`, `ResetPasswordRequest`, `ChangePasswordRequest`, `PasswordChangeResponse` TypeScript interfaces in `types/index.ts`
+- [x] `authApi.forgotPassword`, `authApi.resetPassword`, `authApi.changePassword` in `services/api.ts`
+- [x] `ForgotPasswordPage` (`/forgot-password`) — email form; generic success screen; dev-only `reset_url` block when server returns it
+- [x] `ResetPasswordPage` (`/reset-password?token=...`) — reads token from query string; new + confirm password fields; on success → `/login` via `navigate(replace)`; missing-token guard screen
+- [x] `LoginPage` — "Forgot password?" link replaces static admin-contact note
+- [x] `ProfilePage` — collapsible "Change password" card; current/new/confirm fields with show/hide toggles; client-side validation before API call
+- [x] `App.tsx` — `/forgot-password` and `/reset-password` added as public routes (outside `ProtectedRoute`)
+- [x] TypeScript check: zero errors
+- [x] Build: `npm run build` succeeds
+- [x] DEVELOPMENT.md + ROADMAP.md updated
+
 ## Phase 2 — Users & Auth (continued)
 
 Goal: Full user-facing auth and profile features.
 
 - [ ] Email verification with token link
-- [ ] Password reset flow
+- [x] Password reset flow (complete — Auth Security Phase 2)
 - [ ] Profile pages & progress history
 - [ ] Session replacement: auth tokens instead of anonymous UUIDs
 - [ ] Frontend login / register pages

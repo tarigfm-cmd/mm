@@ -269,9 +269,11 @@ Alternatively, use `scripts/preview_content_package.py` to validate a package be
 
 | URL | Page |
 |-----|------|
-| `/login` | LoginPage — email + password, inline error, return-URL redirect |
+| `/login` | LoginPage — email + password, inline error, return-URL redirect, "Forgot password?" link |
 | `/register` | RegisterPage — email, username, full name, password + confirm-password |
-| `/profile` | ProfilePage — view/edit full name + username, account status, logout |
+| `/forgot-password` | ForgotPasswordPage — email form; generic success; dev-only reset URL block |
+| `/reset-password?token=...` | ResetPasswordPage — new + confirm password; on success → `/login` |
+| `/profile` | ProfilePage — view/edit full name + username, account status, logout, change password section |
 
 ### Token storage
 
@@ -298,6 +300,34 @@ Alternatively, use `scripts/preview_content_package.py` to validate a package be
 | `updateMe(data)` | `PATCH /api/auth/me` | `{full_name?, username?}` |
 | `logout()` | `POST /api/auth/logout` | Best-effort server revoke |
 | `refresh(rt)` | `POST /api/auth/refresh` | Used by `useAuthInit` hook |
+| `forgotPassword(data)` | `POST /api/auth/forgot-password` | Always generic response |
+| `resetPassword(data)` | `POST /api/auth/reset-password` | Token from query string |
+| `changePassword(data)` | `POST /api/auth/change-password` | Requires valid access token |
+
+### Password reset dev flow
+
+The platform has no SMTP server. In development, enable the reset URL in the API response:
+
+```env
+# .env
+EXPOSE_RESET_TOKEN_IN_DEV=true
+```
+
+Then the `POST /api/auth/forgot-password` response includes `reset_url` for any existing user. The `/forgot-password` page displays this URL in an amber dev-mode block when the server returns it.
+
+**Token behaviour:**
+- SHA-256 hash stored; raw token never persisted
+- 60-minute expiry (configurable via `PASSWORD_RESET_TOKEN_EXPIRE_MINUTES`)
+- Single-use: `used_at` set on consumption
+- Latest-only policy: requesting a new token invalidates all previous unused tokens for that user
+- On success: all active refresh tokens revoked (forces re-login on other devices)
+
+**Change password (`POST /api/auth/change-password`):**
+- Requires authentication (access token)
+- Verifies `current_password` against stored hash
+- Rejects `new_password` identical to current password
+- Enforces rules: min 8 chars, 1 uppercase, 1 digit
+- Revokes all active refresh tokens on success
 
 ## Admin Governance UI
 

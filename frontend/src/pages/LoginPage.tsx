@@ -109,9 +109,11 @@ export default function LoginPage() {
                     : <EyeIcon className="w-4 h-4" />}
                 </button>
               </div>
-              <p className="mt-1 text-xs text-gray-400">
-                Forgot your password? Contact your administrator.
-              </p>
+              <div className="mt-1 text-right">
+                <Link to="/forgot-password" className="text-xs text-primary-600 hover:text-primary-700">
+                  Forgot password?
+                </Link>
+              </div>
             </div>
 
             <button

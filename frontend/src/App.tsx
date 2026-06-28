@@ -15,6 +15,8 @@ const OrgDetailPage = lazy(() => import('@/pages/OrgDetailPage'))
 const ProgressPage = lazy(() => import('@/pages/ProgressPage'))
 const LoginPage = lazy(() => import('@/pages/LoginPage'))
 const RegisterPage = lazy(() => import('@/pages/RegisterPage'))
+const ForgotPasswordPage = lazy(() => import('@/pages/ForgotPasswordPage'))
+const ResetPasswordPage = lazy(() => import('@/pages/ResetPasswordPage'))
 const ProfilePage = lazy(() => import('@/pages/ProfilePage'))
 const BillingPage = lazy(() => import('@/pages/BillingPage'))
 const PayPalSuccessPage = lazy(() => import('@/pages/PayPalSuccessPage'))
@@ -53,6 +55,8 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
 
       <Route element={<ProtectedRoute />}>
         <Route path="/" element={<Dashboard />} />

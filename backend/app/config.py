@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 30
     jwt_refresh_token_expire_days: int = 30
+    # Password reset token TTL in minutes (default: 60)
+    password_reset_token_expire_minutes: int = 60
+    # Set to true in development to return the reset URL in the forgot-password response.
+    # Must be false in production — no email is sent; the URL would be logged only.
+    expose_reset_token_in_dev: bool = False
 
     # ── Rate Limiting ─────────────────────────────────────────────────────────
     rate_limit_per_minute: int = 60

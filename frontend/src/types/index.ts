@@ -121,6 +121,29 @@ export interface UserUpdate {
   username?: string
 }
 
+export interface ForgotPasswordRequest {
+  email: string
+}
+
+export interface ForgotPasswordResponse {
+  message: string
+  reset_url?: string | null
+}
+
+export interface ResetPasswordRequest {
+  token: string
+  new_password: string
+}
+
+export interface ChangePasswordRequest {
+  current_password: string
+  new_password: string
+}
+
+export interface PasswordChangeResponse {
+  message: string
+}
+
 // ── Organizations ──────────────────────────────────────────────────────────────
 
 export type OrgType =

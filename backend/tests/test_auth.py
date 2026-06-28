@@ -1,4 +1,7 @@
 """Integration tests for authentication endpoints."""
+import hashlib
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import func, select
@@ -270,3 +273,298 @@ async def test_logout_revokes_refresh_token(client: AsyncClient):
         "refresh_token": tokens["refresh_token"],
     })
     assert resp2.status_code == 401
+
+
+# ── Password reset ─────────────────────────────────────────────────────────────
+
+def _make_prt(user_id, *, raw_token: str, minutes_until_expiry: int = 60):
+    """Build a PasswordResetToken ORM object with a known raw token."""
+    from app.core.security import hash_token
+    from app.models.identity import PasswordResetToken
+    return PasswordResetToken(
+        user_id=user_id,
+        token_hash=hash_token(raw_token),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=minutes_until_expiry),
+    )
+
+
+@pytest.mark.asyncio
+async def test_forgot_password_existing_user_creates_token(
+    client: AsyncClient, fresh_engine
+) -> None:
+    """Forgot-password for an existing user must create a PasswordResetToken record."""
+    from app.models.identity import PasswordResetToken, User
+
+    await _register(client)
+
+    resp = await client.post("/api/auth/forgot-password", json={"email": VALID_USER["email"]})
+    assert resp.status_code == 200
+    assert "password reset" in resp.json()["message"].lower()
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        user = (await s.execute(select(User).where(User.email == VALID_USER["email"]))).scalar_one()
+        token_row = (
+            await s.execute(
+                select(PasswordResetToken).where(PasswordResetToken.user_id == user.id)
+            )
+        ).scalar_one_or_none()
+
+    assert token_row is not None
+    assert token_row.used_at is None
+    # expires_at may be naive (SQLite) or aware (PostgreSQL); compare naively
+    naive_now = datetime.now(timezone.utc).replace(tzinfo=None)
+    expires_naive = token_row.expires_at.replace(tzinfo=None) if token_row.expires_at.tzinfo else token_row.expires_at
+    assert expires_naive > naive_now
+
+
+@pytest.mark.asyncio
+async def test_forgot_password_nonexistent_user_returns_same_response(
+    client: AsyncClient,
+) -> None:
+    """Forgot-password for unknown email must return the same generic message (no enumeration)."""
+    resp_real = await client.post("/api/auth/forgot-password", json={"email": "nobody@nowhere.com"})
+    assert resp_real.status_code == 200
+    assert "password reset" in resp_real.json()["message"].lower()
+    assert resp_real.json().get("reset_url") is None
+
+
+@pytest.mark.asyncio
+async def test_forgot_password_with_dev_flag_returns_reset_url(
+    client: AsyncClient,
+) -> None:
+    """When expose_reset_token_in_dev=True, the reset URL is returned in the response."""
+    from unittest.mock import patch
+    from app.config import Settings
+
+    await _register(client)
+
+    dev_settings = Settings(expose_reset_token_in_dev=True)
+    with patch("app.routes.auth.get_settings", return_value=dev_settings):
+        resp = await client.post(
+            "/api/auth/forgot-password", json={"email": VALID_USER["email"]}
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data.get("reset_url") is not None
+    assert "/reset-password?token=" in data["reset_url"]
+
+
+@pytest.mark.asyncio
+async def test_forgot_password_invalidates_previous_unused_tokens(
+    client: AsyncClient, fresh_engine
+) -> None:
+    """A second forgot-password request must invalidate the first token."""
+    from app.models.identity import PasswordResetToken, User
+
+    await _register(client)
+
+    await client.post("/api/auth/forgot-password", json={"email": VALID_USER["email"]})
+    await client.post("/api/auth/forgot-password", json={"email": VALID_USER["email"]})
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        user = (await s.execute(select(User).where(User.email == VALID_USER["email"]))).scalar_one()
+        count = (
+            await s.execute(
+                select(func.count(PasswordResetToken.id)).where(
+                    PasswordResetToken.user_id == user.id,
+                    PasswordResetToken.used_at.is_(None),
+                )
+            )
+        ).scalar_one()
+
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_reset_password_valid_token_updates_password(
+    client: AsyncClient, fresh_engine
+) -> None:
+    """Valid token + valid new password must update the user's password."""
+    from app.models.identity import User
+
+    await _register(client)
+
+    raw = "ValidResetToken001"
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        user = (await s.execute(select(User).where(User.email == VALID_USER["email"]))).scalar_one()
+        s.add(_make_prt(user.id, raw_token=raw))
+        await s.commit()
+
+    resp = await client.post(
+        "/api/auth/reset-password",
+        json={"token": raw, "new_password": "NewPassword1!"},
+    )
+    assert resp.status_code == 200
+    assert "reset" in resp.json()["message"].lower()
+
+    # Can now login with new password
+    login = await client.post(
+        "/api/auth/login",
+        json={"email": VALID_USER["email"], "password": "NewPassword1!"},
+    )
+    assert login.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_reset_password_expired_token_returns_400(
+    client: AsyncClient, fresh_engine
+) -> None:
+    from app.models.identity import User
+
+    await _register(client)
+
+    raw = "ExpiredResetToken001"
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        user = (await s.execute(select(User).where(User.email == VALID_USER["email"]))).scalar_one()
+        s.add(_make_prt(user.id, raw_token=raw, minutes_until_expiry=-1))
+        await s.commit()
+
+    resp = await client.post(
+        "/api/auth/reset-password",
+        json={"token": raw, "new_password": "NewPassword1!"},
+    )
+    assert resp.status_code == 400
+    assert "expired" in resp.json()["detail"].lower() or "invalid" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_reset_password_already_used_token_returns_400(
+    client: AsyncClient, fresh_engine
+) -> None:
+    from app.models.identity import PasswordResetToken, User
+
+    await _register(client)
+
+    raw = "UsedResetToken001"
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        user = (await s.execute(select(User).where(User.email == VALID_USER["email"]))).scalar_one()
+        prt = _make_prt(user.id, raw_token=raw)
+        prt.used_at = datetime.now(timezone.utc)
+        s.add(prt)
+        await s.commit()
+
+    resp = await client.post(
+        "/api/auth/reset-password",
+        json={"token": raw, "new_password": "NewPassword1!"},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_reset_password_invalid_token_returns_400(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/api/auth/reset-password",
+        json={"token": "nonexistent-token-xyz", "new_password": "NewPassword1!"},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_reset_password_revokes_refresh_tokens(
+    client: AsyncClient, fresh_engine
+) -> None:
+    """After password reset, existing refresh tokens must be revoked."""
+    from app.models.identity import RefreshToken, User
+
+    await _register(client)
+    tokens = await _login(client)
+
+    raw = "ResetRevokesRT001"
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        user = (await s.execute(select(User).where(User.email == VALID_USER["email"]))).scalar_one()
+        s.add(_make_prt(user.id, raw_token=raw))
+        await s.commit()
+
+    await client.post(
+        "/api/auth/reset-password",
+        json={"token": raw, "new_password": "NewPassword1!"},
+    )
+
+    # Old refresh token must be revoked
+    resp = await client.post("/api/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+    assert resp.status_code == 401
+
+
+# ── Change password ────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_change_password_correct_current_password(client: AsyncClient) -> None:
+    await _register(client)
+    tokens = await _login(client)
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    resp = await client.post(
+        "/api/auth/change-password",
+        json={"current_password": VALID_USER["password"], "new_password": "NewAuthPass2!"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert "changed" in resp.json()["message"].lower()
+
+    # Can login with new password
+    login = await client.post(
+        "/api/auth/login",
+        json={"email": VALID_USER["email"], "password": "NewAuthPass2!"},
+    )
+    assert login.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_change_password_wrong_current_password_returns_400(
+    client: AsyncClient,
+) -> None:
+    await _register(client)
+    tokens = await _login(client)
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    resp = await client.post(
+        "/api/auth/change-password",
+        json={"current_password": "WrongPassword1!", "new_password": "NewAuthPass2!"},
+        headers=headers,
+    )
+    assert resp.status_code == 400
+    assert "incorrect" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_change_password_same_as_current_returns_400(client: AsyncClient) -> None:
+    await _register(client)
+    tokens = await _login(client)
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    resp = await client.post(
+        "/api/auth/change-password",
+        json={"current_password": VALID_USER["password"], "new_password": VALID_USER["password"]},
+        headers=headers,
+    )
+    assert resp.status_code == 400
+    assert "different" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_change_password_revokes_refresh_tokens(client: AsyncClient) -> None:
+    """After changing password, existing refresh tokens must be revoked."""
+    await _register(client)
+    tokens = await _login(client)
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    await client.post(
+        "/api/auth/change-password",
+        json={"current_password": VALID_USER["password"], "new_password": "NewAuthPass2!"},
+        headers=headers,
+    )
+
+    resp = await client.post(
+        "/api/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_change_password_requires_auth(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/api/auth/change-password",
+        json={"current_password": "Anything1!", "new_password": "NewPassword1!"},
+    )
+    assert resp.status_code in (401, 403)
