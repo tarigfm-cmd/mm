@@ -246,20 +246,44 @@ The learner training section is accessible to any authenticated user at `/learn/
 | URL | Page |
 |-----|------|
 | `/learn/content` | TrainingLibraryPage — browse published content with region/type/difficulty/search filters |
-| `/learn/content/:id?region=UK` | TrainingDetailPage — safe content view + attempt form + result |
-| `/learn/progress` | TrainingProgressPage — attempts, scores, weakness breakdown, recent history |
+| `/learn/content/:id?region=UK` | TrainingDetailPage — step-based guided training: flow → session → steps → submit → result |
+| `/learn/progress` | TrainingProgressPage — sessions, scores, dimension breakdown, recommendation |
 
 ### Learner API client
 
-`frontend/src/services/learnApi.ts` — separate Axios instance with the same JWT refresh interceptor pattern. Exports `learnApi` with four methods: `browse`, `getDetail`, `submitAttempt`, `getProgress`.
+`frontend/src/services/learnApi.ts` — separate Axios instance with the same JWT refresh interceptor pattern. Exports `learnApi` with:
+- `browse` — list published content
+- `getDetail` — fetch safe content detail
+- `getTrainingFlow` — fetch step blueprint per content type (no hidden fields)
+- `startSession` — create `LearnerTrainingSession`
+- `submitSession` — submit all responses; returns dimension feedback + reveal summary
+- `submitAttempt` — Phase-1 single-attempt endpoint (kept for compatibility)
+- `getProgress` — comprehensive progress summary
+
+### Training engine routes
+
+```bash
+GET  /api/learn/content/{id}/training-flow?region_code=UK   # step blueprint
+POST /api/learn/content/{id}/sessions                        # start session
+POST /api/learn/sessions/{session_id}/submit                 # submit all responses
+```
+
+Run engine tests:
+
+```bash
+cd backend
+pytest tests/test_training_engine.py -v
+```
 
 ### Key learner UX constraints
 
 - Region selector defaults to `UK`. Changing region reloads the library.
 - Empty library state explicitly tells users that an admin must publish content first.
-- Answer/scoring keys are never returned by the detail endpoint — the backend strips them.
-- After submitting an attempt the form is replaced by the result panel (no re-attempt button on the same page).
-- Progress page uses `LearnerFailureAnalytics`, not `Interaction` — separate from the Scenario progress page.
+- Answer/scoring keys are never returned by the detail or flow endpoints — only in the submit response as `reveal_summary`.
+- Sessions are user-scoped. Users cannot submit another user's session (403).
+- Completed sessions cannot be re-submitted (409).
+- Progress page shows session-level data (completed_sessions, average_score_percent) plus attempt-level dimension breakdown.
+- Progress page uses `LearnerFailureAnalytics` + `LearnerTrainingSession` — separate from the Scenario progress page.
 
 ### Frontend TypeScript checks
 

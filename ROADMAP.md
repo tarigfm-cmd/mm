@@ -110,7 +110,29 @@ Goal: Close gaps discovered after the initial admin UI build — real data every
 - [x] 26 new backend tests in `test_admin_ui_stabilization.py`; full suite 243/243 passing
 - [x] TypeScript check: zero errors
 
-## Learner-Facing Published Content Experience — Phase 1 (Current)
+## Interactive Training Engine — Phase 2 (Current)
+
+Goal: Make training feel like real community pharmacy practice — step-based flow, multi-dimensional scoring, dimension feedback, post-submission reveal, and richer progress analytics.
+
+- [x] `LearnerTrainingSession` model — tracks guided sessions per user/content/region; statuses: started, completed, abandoned
+- [x] Alembic migration 007 — `learner_training_sessions` table
+- [x] `training_engine.py` service — deterministic 8-dimension scoring; no AI; no invented clinical content; `not_assessable` for unscored dimensions
+- [x] `GET /api/learn/content/{id}/training-flow?region_code=` — returns structured pre-submission step blueprint per content type; hidden fields never included
+- [x] `POST /api/learn/content/{id}/sessions` — creates session; verifies published; stores current version
+- [x] `POST /api/learn/sessions/{id}/submit` — user-scoped; idempotency gate; deterministic scoring; creates LearnerFailureAnalytics; returns dimension_feedback + reveal_summary
+- [x] `GET /api/learn/progress` — upgraded: completed_sessions, average_score_percent, strongest/weakest dimension, dimension_breakdown, recent_sessions, recommended_next_content_type/domain
+- [x] Scoring dimensions: red_flag_recognition, triage_or_referral_decision, medication_safety, counseling_quality, documentation_quality, calculation_accuracy, interaction_detection, communication_safety
+- [x] Hidden/reveal security: 7 answer keys never appear before submission; reveal_summary only in submit response
+- [x] TrainingDetailPage upgraded — flow fetch → session start → step-by-step cards → submit → result with dimension feedback + reveal
+- [x] TrainingProgressPage upgraded — 4 stat cards, strongest/weakest dim, recommendation CTA, recent sessions table
+- [x] New components: TrainingStepCard, TrainingProgressIndicator, DimensionScoreCard, TrainingResultPanel, ConfidenceSelector, RedFlagSelector, ActionResponseInput
+- [x] `learnApi.ts` — added getTrainingFlow, startSession, submitSession
+- [x] `types/learn.ts` — full TypeScript types for all Phase 2 schemas
+- [x] 25 new backend tests in `test_training_engine.py`; full suite 293/293 passing
+- [x] TypeScript check: zero errors
+- [x] CONTENT_GOVERNANCE.md, DEVELOPMENT.md, ROADMAP.md updated
+
+## Learner-Facing Published Content Experience — Phase 1 (Complete)
 
 Goal: Close the loop from published content to learner training and tracked progress.
 

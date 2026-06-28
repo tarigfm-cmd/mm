@@ -538,3 +538,66 @@ class ImportRowError(Base):
     import_batch: Mapped["ImportBatch"] = relationship(
         "ImportBatch", back_populates="row_errors"
     )
+
+
+# ---------------------------------------------------------------------------
+# LearnerTrainingSession
+# ---------------------------------------------------------------------------
+
+class LearnerTrainingSession(Base):
+    """Tracks a single guided training session for one learner on one content item."""
+
+    __tablename__ = "learner_training_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True, native_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True, native_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    content_item_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True, native_uuid=True),
+        ForeignKey("content_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    content_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True, native_uuid=True),
+        ForeignKey("content_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    region_code: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="started", index=True
+    )  # "started" | "completed" | "abandoned"
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    current_step: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    total_steps: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_score: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    score_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    failed_dimensions_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    not_assessable_dimensions_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    learner_responses_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    feedback_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped[Optional["User"]] = relationship("User", foreign_keys=[user_id])  # noqa: F821
+    content_item: Mapped["ContentItem"] = relationship(
+        "ContentItem", foreign_keys=[content_item_id]
+    )
+    content_version: Mapped["ContentVersion"] = relationship(
+        "ContentVersion", foreign_keys=[content_version_id]
+    )

@@ -61,7 +61,83 @@ class LearnableContentDetail(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Learner attempt
+# Training flow (pre-submission step blueprint)
+# ---------------------------------------------------------------------------
+
+class TrainingFlowStep(BaseModel):
+    """One step in the guided training flow. Contains no hidden fields."""
+    step_number: int
+    step_type: str         # "briefing" | "red_flag_check" | "decision" | "counseling"
+    title: str
+    instruction: str
+    safe_content: dict[str, Any]    # safe subset of payload for this step
+    input_required: bool
+    input_type: str        # "none" | "text" | "action_select" | "checkbox_list"
+    options: list[str]     # choices for action_select / checkbox_list
+
+
+class TrainingFlowResponse(BaseModel):
+    content_item_id: uuid.UUID
+    content_type: str
+    title: str
+    total_steps: int
+    steps: list[TrainingFlowStep]
+    scoring_note: str
+
+
+# ---------------------------------------------------------------------------
+# Training sessions
+# ---------------------------------------------------------------------------
+
+class SessionStartRequest(BaseModel):
+    region_code: str
+
+    def valid_region(self) -> bool:
+        return self.region_code in REGION_CODES
+
+
+class SessionStartResponse(BaseModel):
+    session_id: uuid.UUID
+    content_item_id: uuid.UUID
+    content_version_id: uuid.UUID
+    region_code: str
+    status: str
+    current_step: int
+    total_steps: int
+    started_at: datetime
+
+
+class SessionSubmitRequest(BaseModel):
+    red_flags_selected: Optional[list[str]] = None
+    action_selected: Optional[str] = Field(default=None, max_length=500)
+    counseling_points: Optional[list[str]] = None
+    documentation_points: Optional[list[str]] = None
+    answer_text: Optional[str] = Field(default=None, max_length=5000)
+    confidence: Optional[int] = Field(default=None, ge=1, le=5)
+    time_to_decision_seconds: Optional[int] = Field(default=None, ge=0, le=86400)
+
+
+class DimensionFeedbackItem(BaseModel):
+    dimension: str
+    status: str     # "passed" | "failed" | "not_assessable"
+    feedback: str
+
+
+class SessionSubmitResponse(BaseModel):
+    session_id: uuid.UUID
+    status: str                             # "completed"
+    score: Optional[float]
+    max_score: float
+    score_percent: Optional[float]
+    failed_dimensions: list[str]
+    not_assessable_dimensions: list[str]
+    dimension_feedback: list[DimensionFeedbackItem]
+    reveal_summary: dict[str, Any]          # safe post-submission payload reveal
+    next_recommendation: str
+
+
+# ---------------------------------------------------------------------------
+# Learner attempt (Phase 1 — kept for backwards compat)
 # ---------------------------------------------------------------------------
 
 class LearnerAttemptCreate(BaseModel):
@@ -106,9 +182,30 @@ class LearnerRecentAttempt(BaseModel):
     created_at: datetime
 
 
+class LearnerSessionSummary(BaseModel):
+    id: uuid.UUID
+    content_item_id: uuid.UUID
+    content_title: Optional[str]
+    content_type: Optional[str]
+    region_code: str
+    status: str
+    score: Optional[float]
+    score_percent: Optional[float]
+    started_at: datetime
+    completed_at: Optional[datetime]
+
+
 class LearnerProgressSummary(BaseModel):
     total_attempts: int
-    average_score: Optional[float]
+    completed_sessions: int
+    average_score: Optional[float]          # 0.0–1.0 from LearnerFailureAnalytics
+    average_score_percent: Optional[float]  # 0–100 from LearnerTrainingSession
+    strongest_dimension: Optional[str]
+    weakest_dimension: Optional[str]
     attempts_by_content_type: dict[str, int]
-    weakness_breakdown: dict[str, float]
+    dimension_breakdown: dict[str, float]   # dimension -> fail_rate
+    weakness_breakdown: dict[str, float]    # alias kept for compatibility
     recent_attempts: list[LearnerRecentAttempt]
+    recent_sessions: list[LearnerSessionSummary]
+    recommended_next_content_type: Optional[str]
+    recommended_next_domain: Optional[str]

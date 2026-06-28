@@ -1,5 +1,5 @@
 /**
- * Learner API client — published content browse, detail, attempt, progress.
+ * Learner API client — published content browse, detail, training sessions, progress.
  * All endpoints require authentication. Only published content is returned.
  */
 import axios from 'axios'
@@ -11,6 +11,10 @@ import type {
   LearnerAttemptCreate,
   LearnerAttemptResult,
   LearnerProgressSummary,
+  SessionStartResponse,
+  SessionSubmitRequest,
+  SessionSubmitResponse,
+  TrainingFlowResponse,
 } from '@/types/learn'
 
 const BASE_URL = ((import.meta as unknown) as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL ?? ''
@@ -91,6 +95,34 @@ export const learnApi = {
     return data
   },
 
+  getTrainingFlow: async (id: string, regionCode: string): Promise<TrainingFlowResponse> => {
+    const { data } = await learnHttp.get<TrainingFlowResponse>(
+      `/api/learn/content/${id}/training-flow`,
+      { params: { region_code: regionCode } },
+    )
+    return data
+  },
+
+  startSession: async (id: string, regionCode: string): Promise<SessionStartResponse> => {
+    const { data } = await learnHttp.post<SessionStartResponse>(
+      `/api/learn/content/${id}/sessions`,
+      { region_code: regionCode },
+    )
+    return data
+  },
+
+  submitSession: async (
+    sessionId: string,
+    body: SessionSubmitRequest,
+  ): Promise<SessionSubmitResponse> => {
+    const { data } = await learnHttp.post<SessionSubmitResponse>(
+      `/api/learn/sessions/${sessionId}/submit`,
+      body,
+    )
+    return data
+  },
+
+  // Phase-1 single-attempt endpoint (kept for compatibility)
   submitAttempt: async (id: string, body: LearnerAttemptCreate): Promise<LearnerAttemptResult> => {
     const { data } = await learnHttp.post<LearnerAttemptResult>(
       `/api/learn/content/${id}/attempt`,

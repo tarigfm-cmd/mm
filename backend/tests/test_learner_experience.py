@@ -602,5 +602,6 @@ async def test_progress_weakness_breakdown(client: AsyncClient, fresh_engine):
 
     r = await client.get("/api/learn/progress", headers=_auth(token))
     wb = r.json()["weakness_breakdown"]
-    assert "red_flag" in wb
-    assert wb["red_flag"] == 1.0
+    # Phase 2: dimension keys use full scoring engine names
+    assert "red_flag_recognition" in wb
+    assert wb["red_flag_recognition"] == 1.0
