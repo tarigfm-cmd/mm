@@ -77,6 +77,18 @@ npm run dev
 For local dev without Docker, the Vite proxy falls back to `http://localhost:8000`
 (configurable via `BACKEND_URL` env var if your backend runs elsewhere).
 
+## Production Deployment
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the full production deployment guide including:
+- Required environment variables and security flags
+- Alembic migration command (`alembic upgrade head`)
+- Docker Compose start sequence
+- Health check verification
+- First admin user creation
+- PayPal live setup
+- Password reset limitation and workarounds
+- Deployment checklist summary
+
 ## Running Tests
 
 ### Backend
@@ -740,3 +752,28 @@ pytest tests/test_paypal.py -v
 ### Payment integrations excluded
 
 Stripe, Paddle, Lemon Squeezy, and Shopify are **permanently excluded** from this project.
+
+## Security Hardening (Beta Launch Gate)
+
+### Security headers
+
+All responses include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: strict-origin-when-cross-origin` — applied via ASGI middleware in `backend/app/main.py`.
+
+### Rate limiting
+
+Rate limiting is implemented via [SlowAPI](https://github.com/laurents/slowapi). The shared limiter lives in `backend/app/core/limiter.py`. Import from there (not `app.main`) to apply `@limiter.limit()` decorators on new routes without circular imports.
+
+In tests, an autouse fixture in `conftest.py` disables rate limiting:
+
+```python
+@pytest.fixture(autouse=True)
+def disable_rate_limiting():
+    from app.core.limiter import limiter
+    limiter.enabled = False
+    yield
+    limiter.enabled = True
+```
+
+### Production secret validation
+
+`_check_production_secrets(settings)` in `app/main.py` is called at startup (inside the lifespan). It raises `RuntimeError` if `SECRET_KEY` or `JWT_SECRET_KEY` contain known default placeholder strings, and logs `WARNING` if `EXPOSE_RESET_TOKEN_IN_DEV` or `PAYPAL_SKIP_WEBHOOK_VERIFY` are `True`. The check is skipped entirely when `DEBUG=True` (dev/test).

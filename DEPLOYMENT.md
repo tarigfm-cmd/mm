@@ -1,382 +1,274 @@
-# Deployment Guide - Going Live 🚀
+# Production Deployment Checklist
 
-## Quick Deployment Options
-
-### **Option 1: Heroku (Fastest - 5 minutes)**
-
-Perfect for MVP, single-click deploy.
-
-```bash
-# Install Heroku CLI
-brew install heroku
-heroku login
-
-# Create apps
-heroku create clinical-ai-backend
-heroku create clinical-ai-frontend
-
-# Set environment variables
-heroku config:set OPENAI_API_KEY=sk-your-key --app clinical-ai-backend
-heroku config:set DEBUG=False --app clinical-ai-backend
-
-# Add database
-heroku addons:create heroku-postgresql:hobby-dev --app clinical-ai-backend
-
-# Deploy backend
-git subtree push --prefix backend heroku/main
-
-# Deploy frontend
-# Go to https://vercel.com → Import from GitHub → Deploy
-```
-
-**Cost:** ~$7/month backend + ~$0 frontend = **$84/year**
+Use this document before every production deployment. Work through each section top-to-bottom.
 
 ---
 
-### **Option 2: AWS Free Tier (Medium - 15 minutes)**
+## 1. Pre-flight — Environment Variables
 
-Best long-term option with 1 year free tier.
+Copy `.env.example` to `.env` and set every variable below. The app **refuses to start** in production (`DEBUG=False`) if any unsafe default secret is detected.
 
-```bash
-# 1. Create AWS account at aws.amazon.com
-# 2. Launch EC2 (Ubuntu 22.04 LTS, t2.micro - Free!)
+### Required (app will not start without these)
 
-# SSH into instance
-ssh -i your-key.pem ubuntu@your-ec2-public-ip
+| Variable | Notes |
+|----------|-------|
+| `SECRET_KEY` | 50+ char random hex. `python3 -c "import secrets; print(secrets.token_hex(32))"` |
+| `JWT_SECRET_KEY` | 32+ char random hex. Same command as above. |
+| `DB_USER` | PostgreSQL username |
+| `DB_PASSWORD` | PostgreSQL password |
+| `DB_HOST` | PostgreSQL host (Docker service name or external host) |
+| `DB_PORT` | PostgreSQL port (default `5432`) |
+| `DB_NAME` | Database name |
+| `REDIS_URL` | Full Redis URL, e.g. `redis://redis:6379/0` |
 
-# Install Docker
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
-sudo usermod -aG docker ubuntu
+### Security flags (must remain False in production)
 
-# Clone and deploy
-git clone https://github.com/tarigfm-cmd/mm.git
-cd mm
-cp .env.example .env
-nano .env  # Add OpenAI key
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `DEBUG` | `False` | **Never True in production.** Enables `Base.metadata.create_all` and bypasses secret validation. |
+| `EXPOSE_RESET_TOKEN_IN_DEV` | `False` | **Never True in production.** Exposes raw password-reset URL in API response. |
+| `PAYPAL_SKIP_WEBHOOK_VERIFY` | `False` | **Never True in production.** Disables PayPal webhook signature verification. |
 
-# Run production setup
-docker-compose -f docker-compose.prod.yml up -d
+### Recommended production settings
 
-# Setup SSL with Certbot
-sudo apt update && sudo apt install -y certbot python3-certbot-nginx
-sudo certbot certonly --standalone -d your-domain.com
+```env
+DEBUG=False
+LOG_LEVEL=INFO
+CORS_ORIGINS=https://your-domain.example.com
+APP_PUBLIC_URL=https://your-domain.example.com
+
+JWT_ALGORITHM=HS256
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+JWT_REFRESH_TOKEN_EXPIRE_DAYS=30
+
+PASSWORD_RESET_TOKEN_EXPIRE_MINUTES=60
+
+MAX_UPLOAD_SIZE=52428800
+UPLOAD_DIR=./uploads
+ALLOWED_EXTENSIONS=pdf,png,jpg,jpeg,txt,docx
+
+PAYPAL_ENV=live
+VITE_API_URL=
 ```
 
-**Cost:** Free 12 months, then ~$25/month (EC2 + RDS) = **Free first year**
+`VITE_API_URL` must be **empty** — a relative path so SPA API calls go through the nginx proxy, not directly to the backend.
 
----
+### AI
 
-### **Option 3: Digital Ocean (Popular - 10 minutes)**
-
-Simplest with excellent documentation.
-
-```bash
-# 1. Create account at digitalocean.com
-# 2. Create App Platform project
-# 3. Connect GitHub repository
-# 4. Set environment variables:
-#    - OPENAI_API_KEY
-#    - DEBUG=False
-#    - DATABASE_URL (auto-created)
-# 5. Click "Deploy"
-# 6. Wait 5 minutes
-# 7. Done! ✅
-
-# Or use Droplet (VPS):
-# 1. Create Ubuntu 22.04 Droplet ($6/month)
-# 2. SSH in and run commands from Option 2
+```env
+ANTHROPIC_API_KEY=sk-ant-...
+AI_MODEL=claude-sonnet-4-6
 ```
 
-**Cost:** $5-15/month = **$60-180/year**
+### PayPal (leave blank to disable checkout gracefully — returns HTTP 503)
 
----
-
-### **Option 4: Railway (Modern - 8 minutes)**
-
-Modern alternative with automatic deployments.
-
-```bash
-# 1. Go to railway.app
-# 2. Login with GitHub
-# 3. New Project → GitHub repo
-# 4. Add PostgreSQL database (auto-linked)
-# 5. Set OPENAI_API_KEY secret
-# 6. Deploy ✅
-```
-
-**Cost:** $5-20/month = **$60-240/year**
-
----
-
-## 🎯 Recommended Setup (Best Value)
-
-### For MVP (Proof of Concept)
-```
-Backend:  Heroku ($7/month)
-Frontend: Vercel (Free)
-Domain:   Namecheap ($12/year)
-Total:    ~$90/year
-```
-
-### For Production (Scalable)
-```
-Backend:  AWS EC2 + RDS ($20/month)
-Frontend: CloudFront + S3 ($2/month)
-Domain:   Route53 ($1/month)
-SSL:      AWS Certificate Manager (Free)
-Total:    ~$275/year
+```env
+PAYPAL_CLIENT_ID=
+PAYPAL_CLIENT_SECRET=
+PAYPAL_WEBHOOK_ID=
+PAYPAL_ENV=live
 ```
 
 ---
 
-## 📋 Step-by-Step: Heroku (Easiest)
+## 2. Database Migrations
 
-### Prerequisites
-- GitHub account
-- Heroku account (free)
-- OpenAI API key
-
-### Deploy Backend
+Run migrations **before** starting the application. Never rely on `Base.metadata.create_all` — that is only active when `DEBUG=True`.
 
 ```bash
-# 1. Install Heroku CLI
-brew install heroku  # macOS
-# or https://devcenter.heroku.com/articles/heroku-cli
-
-# 2. Login
-heroku login
-
-# 3. Create backend app
-heroku create clinical-ai-backend
-
-# 4. Set environment variables
-heroku config:set OPENAI_API_KEY=sk-xxxxxxx --app clinical-ai-backend
-heroku config:set DEBUG=False --app clinical-ai-backend
-
-# 5. Add PostgreSQL database
-heroku addons:create heroku-postgresql:hobby-dev --app clinical-ai-backend
-
-# 6. Get database URL (auto-set as DATABASE_URL)
-heroku config --app clinical-ai-backend | grep DATABASE_URL
-
-# 7. Deploy
-git push heroku main
-
-# 8. Check logs
-heroku logs --tail --app clinical-ai-backend
-
-# 9. Run migrations (when ready)
-heroku run "python -m alembic upgrade head" --app clinical-ai-backend
-
-# Backend is live at: https://clinical-ai-backend.herokuapp.com
+cd backend
+alembic upgrade head
 ```
 
-### Deploy Frontend
+Verify the migration chain has a single head:
 
 ```bash
-# Option A: Vercel (Recommended)
-# 1. Go to vercel.com
-# 2. Click "New Project"
-# 3. Import your GitHub repo
-# 4. Set environment: VITE_API_URL=https://clinical-ai-backend.herokuapp.com
-# 5. Click Deploy ✅
+alembic heads
+# Expected output: one revision ID — 012...
+```
 
-# Option B: Netlify
-# 1. Go to netlify.com
-# 2. Connect GitHub
-# 3. Build command: cd frontend && npm run build
-# 4. Publish directory: frontend/dist
-# 5. Set env: VITE_API_URL=https://clinical-ai-backend.herokuapp.com
-# 6. Deploy ✅
+Current chain: `001 → 002 → 003 → 004 → 005 → 006 → 007 → 008 → 009 → 010 → 011 → 012`
+
+If you see multiple heads, **stop the deployment** and resolve the branch before proceeding.
+
+---
+
+## 3. Build
+
+### Frontend
+
+```bash
+cd frontend
+npm ci
+npm run build
+```
+
+Output lands in `frontend/dist/`. The Docker build copies this into the nginx image.
+
+TypeScript check (run before building):
+
+```bash
+npx tsc --noEmit
+```
+
+### Backend
+
+No build step required. Docker builds install requirements from `requirements.txt`.
+
+---
+
+## 4. Docker Compose Production Start
+
+```bash
+docker-compose up -d
+```
+
+Services:
+- **db** — PostgreSQL 15
+- **redis** — Redis 7
+- **backend** — FastAPI on port 8000 (internal only)
+- **frontend** — nginx serving SPA + proxying `/api/` to backend on port 80
+
+The nginx config (`frontend/nginx-frontend.conf`) proxies all `/api/` requests to `http://backend:8000`. Because `VITE_API_URL` is empty (relative paths), all SPA API calls go through nginx — the backend port is never exposed directly.
+
+---
+
+## 5. Health Check
+
+```bash
+curl https://your-domain.example.com/api/health
+```
+
+Expected response:
+
+```json
+{"status": "ok", "database": "ok", "redis": "ok"}
+```
+
+If `"database": "error"` or `"redis": "error"`, check service connectivity before proceeding.
+
+---
+
+## 6. First Admin User
+
+On a fresh database, create the first platform administrator directly:
+
+```bash
+# 1. Register
+curl -X POST https://your-domain.example.com/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","username":"admin","password":"StrongPass1!","full_name":"Platform Admin"}'
+
+# 2. Promote to superuser — direct DB access required for the first admin only
+psql -U $DB_USER -d $DB_NAME \
+  -c "UPDATE users SET is_superuser = true WHERE email = 'admin@example.com';"
+
+# 3. Verify
+curl -X POST https://your-domain.example.com/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","password":"StrongPass1!"}'
+```
+
+After the first admin exists, all subsequent admin promotions can be done via the Swagger UI at `/docs`.
+
+---
+
+## 7. PayPal Setup (if using checkout)
+
+See `DEVELOPMENT.md` → "PayPal sandbox setup sequence" for the full 10-step guide. Production differences:
+
+- Set `PAYPAL_ENV=live` (not `sandbox`)
+- Use live credentials from `https://developer.paypal.com`
+- `PAYPAL_SKIP_WEBHOOK_VERIFY=False` (default — never override in production)
+- Register the webhook URL: `{APP_PUBLIC_URL}/api/billing/webhooks/paypal`
+
+Verify readiness at `/admin/billing/plans` (sign in as superuser).
+
+---
+
+## 8. Password Reset Limitation
+
+**There is no SMTP server.** Password reset tokens are generated and stored, but the reset email is not sent automatically.
+
+**Beta workaround options:**
+
+1. **Dev flag (dev/staging only)** — set `EXPOSE_RESET_TOKEN_IN_DEV=True` to get the raw reset URL back from the `POST /api/auth/forgot-password` response. The `/forgot-password` page displays it. Never use this in production.
+2. **Direct token lookup** — query `password_reset_tokens` table for the user, construct URL as `{APP_PUBLIC_URL}/reset-password?token={raw_token}`. Note: only the SHA-256 hash is stored; for this approach use the dev flag.
+3. **SMTP integration** — wire an email provider (SendGrid, SES, Mailgun) into `POST /api/auth/forgot-password`. Planned future milestone.
+
+---
+
+## 9. Rate Limiting
+
+Rate limits are applied on all sensitive endpoints:
+
+| Endpoint | Limit |
+|----------|-------|
+| `POST /api/auth/register` | 5/minute per IP |
+| `POST /api/auth/login` | 10/minute per IP |
+| `POST /api/auth/refresh` | 20/minute per IP |
+| `POST /api/auth/forgot-password` | 3/minute per IP |
+| `POST /api/auth/reset-password` | 5/minute per IP |
+| `POST /api/auth/change-password` | 5/minute per IP |
+| `POST /api/billing/checkout/paypal` | 10/minute per IP |
+| `POST /api/billing/webhooks/paypal` | 120/minute per IP |
+
+Clients that exceed the limit receive HTTP 429. Rate limiting is implemented via SlowAPI and is always enabled in production (the test fixture that disables it only runs during pytest).
+
+---
+
+## 10. Security Headers
+
+All responses include:
+
+```
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: strict-origin-when-cross-origin
+```
+
+Applied via ASGI middleware in `backend/app/main.py` — cannot be stripped by individual routes.
+
+---
+
+## 11. Backup Recommendation
+
+Before any migration or deployment:
+
+```bash
+pg_dump -U $DB_USER -d $DB_NAME -F c -f backup_$(date +%Y%m%d_%H%M%S).dump
+```
+
+Restore:
+
+```bash
+pg_restore -U $DB_USER -d $DB_NAME -F c backup_YYYYMMDD_HHMMSS.dump
 ```
 
 ---
 
-## 🔐 Production Checklist
+## 12. Monitoring
 
-Before going live:
-
-```
-Security:
-  ☐ DEBUG=False in production
-  ☐ Strong database password (20+ characters)
-  ☐ OPENAI_API_KEY in environment (not hardcoded)
-  ☐ CORS configured for your domain only
-  ☐ Rate limiting enabled
-  ☐ HTTPS/SSL certificate enabled
-
-Database:
-  ☐ Daily backups enabled
-  ☐ Connection pooling configured
-  ☐ Database user has minimal permissions
-  ☐ Migrations tested locally first
-
-Monitoring:
-  ☐ Error tracking (Sentry)
-  ☐ Uptime monitoring (UptimeRobot)
-  ☐ Application logs reviewed
-  ☐ Database performance monitored
-
-Performance:
-  ☐ Frontend assets minified
-  ☐ CDN configured (CloudFront/Cloudflare)
-  ☐ Database queries optimized
-  ☐ Caching strategy implemented
-
-Testing:
-  ☐ All endpoints tested
-  ☐ File upload limits tested
-  ☐ Error scenarios tested
-  ☐ Load testing performed
-```
+Set `SENTRY_DSN` to enable Sentry error tracking. Leave blank to disable.
 
 ---
 
-## 🚨 Common Issues & Solutions
+## Deployment Checklist Summary
 
-### Issue: 502 Bad Gateway
-
-```bash
-# Backend might be down
-heroku logs --tail --app clinical-ai-backend
-
-# Restart app
-heroku restart --app clinical-ai-backend
-
-# Check free dyno hours
-heroku ps --app clinical-ai-backend
-```
-
-### Issue: Database Connection Error
-
-```bash
-# Check database URL
-heroku config --app clinical-ai-backend | grep DATABASE_URL
-
-# Verify database is running
-heroku pg:info --app clinical-ai-backend
-
-# Reset database
-heroku pg:reset DATABASE --app clinical-ai-backend --confirm clinical-ai-backend
-```
-
-### Issue: OpenAI API Errors
-
-```bash
-# Verify API key is set
-heroku config --app clinical-ai-backend | grep OPENAI_API_KEY
-
-# Test connection
-curl -X GET https://clinical-ai-backend.herokuapp.com/api/health
-```
-
----
-
-## 📊 Monitoring After Launch
-
-### Setup Error Tracking
-
-```bash
-# Install Sentry (free tier: $0-29/month)
-# 1. Create account at sentry.io
-# 2. Create new project (select Python for backend)
-# 3. Copy DSN key
-# 4. Set in backend: heroku config:set SENTRY_DSN=<your-dsn>
-```
-
-### Setup Uptime Monitoring
-
-```bash
-# Use UptimeRobot (free)
-# 1. Go to uptimerobot.com
-# 2. Add monitor: https://clinical-ai-backend.herokuapp.com/api/health
-# 3. Get alerts if service goes down
-```
-
-### View Logs
-
-```bash
-# Real-time logs
-heroku logs --tail --app clinical-ai-backend
-
-# Filter by error
-heroku logs --grep error --app clinical-ai-backend
-
-# Get last 100 lines
-heroku logs --num 100 --app clinical-ai-backend
-```
-
----
-
-## 🔄 Continuous Deployment (CI/CD)
-
-### Automatic Deploy on Push
-
-```bash
-# For Heroku + GitHub (Free!)
-# 1. Go to Heroku dashboard
-# 2. Open your app: clinical-ai-backend
-# 3. Go to "Deploy" tab
-# 4. Connect GitHub repository
-# 5. Enable "Automatic deploys" from main branch
-# 6. Every push to main = automatic deploy! 🚀
-```
-
-### GitHub Actions (Advanced)
-
-Create `.github/workflows/deploy.yml` to:
-- Run tests on every push
-- Build Docker images
-- Push to Docker Hub
-- Deploy to your server
-- Send Slack notifications
-
----
-
-## 💰 Cost Optimization
-
-### Reduce Costs
-- Use free tier services first
-- Implement caching (Redis)
-- Compress assets
-- Use CDN for static files
-- Optimize database queries
-
-### Scaling Strategy
-```
-Stage 1: MVP ($90/year)
-  └─ Heroku Free/Eco + Vercel Free
-
-Stage 2: Growth ($200/year)
-  └─ Heroku Standard + Vercel Pro + CloudFlare
-
-Stage 3: Production ($500-1000/year)
-  └─ AWS + RDS + CloudFront + Route53
-```
-
----
-
-## 🎉 You're Live!
-
-### After Deployment
-
-```bash
-# Test your app
-curl https://your-domain.com              # Frontend
-curl https://your-domain.com/api/health   # Backend health check
-
-# View logs
-heroku logs --tail --app clinical-ai-backend
-
-# Scale if needed
-heroku ps:scale web=2 --app clinical-ai-backend  # 2 dynos
-```
-
-**Congratulations! Your Clinical Scenario AI Generator is live! 🎊**
-
-Next steps:
-- Monitor error logs daily
-- Collect user feedback
-- Optimize performance based on metrics
-- Plan scaling as you grow
+- [ ] `.env` copied from `.env.example`; all required variables set
+- [ ] `SECRET_KEY` is a unique random value (not the example default)
+- [ ] `JWT_SECRET_KEY` is a unique random value (not the example default)
+- [ ] `DEBUG=False`
+- [ ] `EXPOSE_RESET_TOKEN_IN_DEV=False`
+- [ ] `PAYPAL_SKIP_WEBHOOK_VERIFY=False`
+- [ ] `CORS_ORIGINS` set to the real domain (not `*`)
+- [ ] `APP_PUBLIC_URL` set to the real public URL
+- [ ] `VITE_API_URL` is empty (nginx proxies `/api/`)
+- [ ] Database backup taken
+- [ ] `alembic upgrade head` run and completed without errors
+- [ ] `alembic heads` shows exactly one head
+- [ ] `npm run build` succeeded (or Docker build passed)
+- [ ] `docker-compose up -d` started all services
+- [ ] `GET /api/health` returns `{"status":"ok","database":"ok","redis":"ok"}`
+- [ ] First admin user created and verified
+- [ ] PayPal credentials configured and readiness check passes (if using checkout)

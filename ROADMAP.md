@@ -355,6 +355,22 @@ Goal: Secure, no-SMTP password reset flow and authenticated password change with
 - [x] Build: `npm run build` succeeds
 - [x] DEVELOPMENT.md + ROADMAP.md updated
 
+## Beta Launch Readiness Gate (Complete)
+
+Goal: Security, operations, and deployment hardening before opening to beta users. No new features.
+
+- [x] Production secret validation — `_check_production_secrets()` raises `RuntimeError` at startup (lifespan) if `SECRET_KEY` or `JWT_SECRET_KEY` still hold default placeholder values; warns (not raises) on `EXPOSE_RESET_TOKEN_IN_DEV=True` or `PAYPAL_SKIP_WEBHOOK_VERIFY=True`; bypassed only when `DEBUG=True`
+- [x] Security headers middleware — all responses carry `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin` via ASGI middleware; verified on 200 and 404 responses
+- [x] Rate limiting on all sensitive endpoints — `register` (5/min), `login` (10/min), `refresh` (20/min), `forgot-password` (3/min), `reset-password` (5/min), `change-password` (5/min), `paypal checkout` (10/min), `paypal webhook` (120/min); shared limiter instance in `app/core/limiter.py` avoids circular imports
+- [x] Rate limiting disabled cleanly in tests — autouse pytest fixture in `conftest.py` sets `limiter.enabled = False` before each test and restores it after; SlowAPI evaluates `self.enabled` at request time so runtime toggling works
+- [x] `.env.example` completed — all required variables documented: `APP_PUBLIC_URL`, `JWT_SECRET_KEY`, `JWT_ALGORITHM`, `JWT_ACCESS_TOKEN_EXPIRE_MINUTES`, `JWT_REFRESH_TOKEN_EXPIRE_DAYS`, `PASSWORD_RESET_TOKEN_EXPIRE_MINUTES`, `EXPOSE_RESET_TOKEN_IN_DEV`, `PAYPAL_CLIENT_ID/SECRET/WEBHOOK_ID`, `PAYPAL_ENV`, `PAYPAL_SKIP_WEBHOOK_VERIFY`; security-flag comments added
+- [x] `frontend/nginx-frontend.conf` — `/api/` proxy block added; all SPA API calls proxied to `http://backend:8000`; `VITE_API_URL` left empty in `.env.example` (relative path, nginx handles routing)
+- [x] Migration chain verified — single head `012`; linear chain `001→012`; production migration command documented
+- [x] `DEPLOYMENT.md` — full production deployment guide: required env vars, migration command, Docker Compose start, health check, first admin creation, PayPal setup, password reset limitation, rate limit table, security headers note, backup recommendation, deployment checklist summary
+- [x] 9 new backend tests in `test_security.py` — security headers on 200 and 404, startup check raises on default keys, passes with custom keys, skipped in debug mode, warns on insecure flags, rate limiter disabled in test env; full suite **414/414** passing
+- [x] TypeScript check: zero errors
+- [x] Frontend build: `npm run build` succeeds
+
 ## Phase 2 — Users & Auth (continued)
 
 Goal: Full user-facing auth and profile features.

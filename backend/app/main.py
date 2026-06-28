@@ -6,12 +6,12 @@ import sentry_sdk
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from slowapi.util import get_remote_address
 
 from app.config import get_settings
+from app.core.limiter import limiter
 from app.database import Base, engine
 from app.routes import analytics as analytics_router
 from app.routes import auth as auth_router
@@ -33,8 +33,44 @@ logger = logging.getLogger(__name__)
 if settings.sentry_dsn:
     sentry_sdk.init(dsn=settings.sentry_dsn, traces_sample_rate=0.1)
 
-# ── Rate Limiter ──────────────────────────────────────────────────────────────
-limiter = Limiter(key_func=get_remote_address)
+
+# ── Production secret validation ──────────────────────────────────────────────
+
+_UNSAFE_SECRET_FRAGMENTS = [
+    ("secret_key", "change-me-in-production"),
+    ("jwt_secret_key", "change-me-jwt-secret-key"),
+]
+
+
+def _check_production_secrets(cfg) -> None:  # type: ignore[type-arg]
+    """Raise RuntimeError if running in production with unsafe default secrets.
+
+    Only enforced when debug=False. Logs warnings for other risky settings.
+    """
+    if cfg.debug:
+        return
+
+    problems = [
+        field
+        for field, fragment in _UNSAFE_SECRET_FRAGMENTS
+        if fragment in getattr(cfg, field, "")
+    ]
+    if problems:
+        raise RuntimeError(
+            f"Unsafe default secret(s) detected in production: {problems}. "
+            "Generate unique values before deploying (debug=False)."
+        )
+
+    if cfg.expose_reset_token_in_dev:
+        logger.warning(
+            "SECURITY: EXPOSE_RESET_TOKEN_IN_DEV is True in a non-debug environment. "
+            "Password reset tokens will be exposed in API responses. Disable immediately."
+        )
+    if cfg.paypal_skip_webhook_verify:
+        logger.warning(
+            "SECURITY: PAYPAL_SKIP_WEBHOOK_VERIFY is True in a non-debug environment. "
+            "PayPal webhook signature verification is disabled. Disable immediately."
+        )
 
 
 async def _seed_subscription_plans() -> None:
@@ -113,7 +149,11 @@ async def _seed_subscription_plans() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    _check_production_secrets(settings)
     logger.info("Starting up — creating database tables…")
+    # create_all is used for dev/test convenience. Production deployments should
+    # run `alembic upgrade head` before starting the server — create_all will
+    # not apply schema changes to existing tables.
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables ready.")
@@ -150,6 +190,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 app.include_router(health_router.router)

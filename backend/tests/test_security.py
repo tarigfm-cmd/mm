@@ -161,3 +161,88 @@ def test_hash_token_is_deterministic():
 
 def test_hash_token_different_inputs():
     assert hash_token("token-a") != hash_token("token-b")
+
+
+# ---------------------------------------------------------------------------
+# Security headers middleware
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_security_headers_present_on_health(client):
+    response = await client.get("/api/health")
+    assert response.headers.get("X-Content-Type-Options") == "nosniff"
+    assert response.headers.get("X-Frame-Options") == "DENY"
+    assert response.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
+
+
+@pytest.mark.asyncio
+async def test_security_headers_present_on_error_response(client):
+    # 404 on unknown routes should still carry security headers
+    response = await client.get("/api/no-such-endpoint-xyz")
+    assert response.headers.get("X-Content-Type-Options") == "nosniff"
+    assert response.headers.get("X-Frame-Options") == "DENY"
+
+
+# ---------------------------------------------------------------------------
+# Production secret validation
+# ---------------------------------------------------------------------------
+
+def _cfg(**overrides):
+    from types import SimpleNamespace
+    base = dict(
+        debug=False,
+        secret_key="a-secure-production-secret-key-at-least-50-chars-xyz",
+        jwt_secret_key="a-secure-jwt-production-secret-key-abc123def456",
+        expose_reset_token_in_dev=False,
+        paypal_skip_webhook_verify=False,
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_startup_check_raises_on_default_secret_key():
+    from app.main import _check_production_secrets
+    with pytest.raises(RuntimeError, match="Unsafe default secret"):
+        _check_production_secrets(_cfg(secret_key="change-me-in-production-min-50-chars-000000000000"))
+
+
+def test_startup_check_raises_on_default_jwt_key():
+    from app.main import _check_production_secrets
+    with pytest.raises(RuntimeError, match="Unsafe default secret"):
+        _check_production_secrets(_cfg(jwt_secret_key="change-me-jwt-secret-key-min-32-chars-00000000000"))
+
+
+def test_startup_check_passes_with_custom_keys():
+    from app.main import _check_production_secrets
+    _check_production_secrets(_cfg())  # should not raise
+
+
+def test_startup_check_skipped_in_debug_mode():
+    from app.main import _check_production_secrets
+    _check_production_secrets(_cfg(
+        debug=True,
+        secret_key="change-me-in-production-min-50-chars-000000000000",
+        jwt_secret_key="change-me-jwt-secret-key-min-32-chars-00000000000",
+    ))  # debug=True bypasses the check
+
+
+def test_startup_check_warns_expose_reset_token(caplog):
+    import logging
+    from app.main import _check_production_secrets
+    with caplog.at_level(logging.WARNING, logger="app.main"):
+        _check_production_secrets(_cfg(expose_reset_token_in_dev=True))
+    assert "EXPOSE_RESET_TOKEN_IN_DEV" in caplog.text
+
+
+def test_startup_check_warns_skip_webhook_verify(caplog):
+    import logging
+    from app.main import _check_production_secrets
+    with caplog.at_level(logging.WARNING, logger="app.main"):
+        _check_production_secrets(_cfg(paypal_skip_webhook_verify=True))
+    assert "PAYPAL_SKIP_WEBHOOK_VERIFY" in caplog.text
+
+
+def test_rate_limiter_disabled_in_test_environment():
+    from app.core.limiter import limiter
+    # The disable_rate_limiting autouse fixture sets this to False before each test
+    assert limiter.enabled is False, "autouse fixture should have disabled the rate limiter"

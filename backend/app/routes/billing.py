@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.dependencies import get_current_user, require_superuser
+from app.core.limiter import limiter
 from app.database import get_db
 from app.models.billing import (
     PaymentCheckoutSession,
@@ -358,7 +359,9 @@ async def admin_assign_subscription(
 
 
 @router.post("/checkout/paypal", response_model=PayPalCheckoutResponse)
+@limiter.limit("10/minute")
 async def paypal_checkout(
+    request: Request,
     body: PayPalCheckoutRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -443,6 +446,7 @@ async def paypal_checkout(
 
 
 @router.post("/webhooks/paypal", response_model=PayPalWebhookResponse)
+@limiter.limit("120/minute")
 async def paypal_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),

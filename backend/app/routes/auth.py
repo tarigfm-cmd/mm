@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.dependencies import get_current_user
+from app.core.limiter import limiter
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -63,6 +64,7 @@ async def _prune_expired_tokens(user_id: uuid.UUID, db: AsyncSession) -> None:
     status_code=status.HTTP_201_CREATED,
     summary="Register a new user account",
 )
+@limiter.limit("5/minute")
 async def register(
     body: UserCreate,
     request: Request,
@@ -109,6 +111,7 @@ async def register(
     response_model=TokenResponse,
     summary="Authenticate and receive JWT tokens",
 )
+@limiter.limit("10/minute")
 async def login(
     body: LoginRequest,
     request: Request,
@@ -166,7 +169,9 @@ async def login(
     response_model=TokenResponse,
     summary="Exchange a refresh token for new tokens",
 )
+@limiter.limit("20/minute")
 async def refresh_tokens(
+    request: Request,
     body: RefreshRequest,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
@@ -306,6 +311,7 @@ async def logout(
     response_model=ForgotPasswordResponse,
     summary="Request a password reset link",
 )
+@limiter.limit("3/minute")
 async def forgot_password(
     body: ForgotPasswordRequest,
     request: Request,
@@ -360,7 +366,9 @@ async def forgot_password(
     response_model=PasswordChangeResponse,
     summary="Reset password using a valid reset token",
 )
+@limiter.limit("5/minute")
 async def reset_password(
+    request: Request,
     body: ResetPasswordRequest,
     db: AsyncSession = Depends(get_db),
 ) -> PasswordChangeResponse:
@@ -413,7 +421,9 @@ async def reset_password(
     response_model=PasswordChangeResponse,
     summary="Change password while authenticated",
 )
+@limiter.limit("5/minute")
 async def change_password(
+    request: Request,
     body: ChangePasswordRequest,
     current_user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),

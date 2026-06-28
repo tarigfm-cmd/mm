@@ -125,6 +125,18 @@ async def db_session(test_engine) -> AsyncIterator[AsyncSession]:
         await session.rollback()
 
 
+@pytest.fixture(autouse=True)
+def disable_rate_limiting():
+    """Disable rate limiting for all tests.
+
+    SlowAPI checks limiter.enabled at request time, so toggling it here is enough.
+    """
+    from app.core.limiter import limiter
+    limiter.enabled = False
+    yield
+    limiter.enabled = True
+
+
 @pytest_asyncio.fixture
 async def client(fresh_engine) -> AsyncIterator[AsyncClient]:
     """Per-test HTTP client backed by a fully isolated in-memory database."""
