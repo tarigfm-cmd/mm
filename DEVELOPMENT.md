@@ -237,6 +237,30 @@ API objects exported:
 - Commit requires explicit confirmation via `ConfirmActionDialog`.
 - Publish and Unpublish actions each require explicit per-region confirmation.
 
+## Learner Training UI
+
+The learner training section is accessible to any authenticated user at `/learn/`.
+
+### Route map
+
+| URL | Page |
+|-----|------|
+| `/learn/content` | TrainingLibraryPage — browse published content with region/type/difficulty/search filters |
+| `/learn/content/:id?region=UK` | TrainingDetailPage — safe content view + attempt form + result |
+| `/learn/progress` | TrainingProgressPage — attempts, scores, weakness breakdown, recent history |
+
+### Learner API client
+
+`frontend/src/services/learnApi.ts` — separate Axios instance with the same JWT refresh interceptor pattern. Exports `learnApi` with four methods: `browse`, `getDetail`, `submitAttempt`, `getProgress`.
+
+### Key learner UX constraints
+
+- Region selector defaults to `UK`. Changing region reloads the library.
+- Empty library state explicitly tells users that an admin must publish content first.
+- Answer/scoring keys are never returned by the detail endpoint — the backend strips them.
+- After submitting an attempt the form is replaced by the result panel (no re-attempt button on the same page).
+- Progress page uses `LearnerFailureAnalytics`, not `Interaction` — separate from the Scenario progress page.
+
 ### Frontend TypeScript checks
 
 Run after any frontend change:

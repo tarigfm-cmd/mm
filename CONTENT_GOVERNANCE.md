@@ -347,13 +347,44 @@ Rules with `is_active=False` are ignored — useful for drafting rules before en
 
 The Alembic migration replicates this by calling `op.create_foreign_key(...)` after both tables are created.
 
+## Learner Published-Content Rules
+
+All learner-facing content endpoints live at `/api/learn/`. They enforce the following guarantees:
+
+1. **Published only** — every endpoint joins `PublicationRecord` with `publication_status='published'` AND `ContentItem.status='published'`. Draft, pending_review, clinically_approved-but-unpublished, needs_update, unpublished, and retired items are invisible to learners.
+2. **Region gated** — learners must supply a `region_code` and only content published for that exact region is returned.
+3. **Answer keys stripped** — the detail endpoint (`GET /api/learn/content/{id}`) removes the following payload fields before responding: `correct_answer_or_expected_response`, `expected_decision`, `expected_pharmacist_action`, `hidden_risk`, `failure_mode`, `critical_fail`, `scoring_rubric`. These are available to the scoring logic inside the attempt endpoint but never returned to the client.
+4. **No admin metadata** — learner schemas exclude: `created_by`, `content_hash`, `source_file_name`, `source_row_number`, reviewer comments, approval batch internals.
+5. **User-scoped progress** — `GET /api/learn/progress` and `POST /api/learn/content/{id}/attempt` always scope to `current_user.id`. No cross-user data leakage.
+6. **No AI** — attempt scoring is deterministic only. No AI calls are made. If structured scoring fields are absent, `score=None` is returned with a message noting that manual review applies.
+
+### Learner API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/learn/content` | Browse published content for a region. Query params: `region_code` (required), `content_type`, `domain`, `difficulty`, `search` (ILIKE on title/external_id), `page`, `page_size`. Requires auth. |
+| `GET` | `/api/learn/content/{id}` | Detail for a single item published in `region_code`. Returns `safe_payload` (answer keys stripped). 404 if not published for region. |
+| `POST` | `/api/learn/content/{id}/attempt` | Submit a learner attempt. Validates publication, scores deterministically, creates `LearnerFailureAnalytics` record. Returns `score`, `feedback`, `failed_dimensions`, `recommended_next_step`. |
+| `GET` | `/api/learn/progress` | Progress summary for the current user: `total_attempts`, `average_score`, `attempts_by_content_type`, `weakness_breakdown`, `recent_attempts`. |
+
+### Deterministic Attempt Scoring
+
+| Content type | Scoring mechanism |
+|---|---|
+| `drill` | Exact string match on `correct_answer_or_expected_response` (case-insensitive, trimmed) |
+| `case` | Exact match on `expected_decision` vs `selected_action` |
+| `prescription_screening` | Exact match on `expected_pharmacist_action` vs `selected_action` |
+| `simulation`, `osce_station`, others | No structured scoring; `score=null`, feedback asks for supervisor review |
+
 ## Known Limitations
 
 - **Evidence region enforcement is coarse.** The publish gate checks that *any* active evidence source exists for `required_evidence_region` — it does not verify that the evidence is linked to the specific content item being published.
 - **RegionPublishingRule `required_review_roles`** is stored in JSON but not yet enforced at publish time. The field is reserved for future multi-role review gate logic.
 - **`requires_local_disclaimer` / `requires_protocol_note`** are stored but not injected into the published payload — enforcement is deferred to the content rendering layer.
 - **`analytics.view_org`** requires the path-param `org_id` to be the same org in which the user holds the permission. Cross-org access by a user with the permission in one org but not another is correctly blocked.
-- **No learner-facing published-content API** is implemented yet; learner UI is a future milestone.
+- **Learner attempt scoring is deterministic only.** Exact-match scoring is reliable only when the content payload contains structured answer fields. Open-ended responses (case presentations, OSCE tasks) return `score=null` and require supervisor review.
+- **`required_review_roles`** stored but not enforced at publish time.
+- **`requires_local_disclaimer` / `requires_protocol_note`** are surfaced to the learner UI as warning banners but are not injected into the content payload itself.
 
 ## Security Constraints
 

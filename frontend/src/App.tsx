@@ -16,6 +16,11 @@ const ProgressPage = lazy(() => import('@/pages/ProgressPage'))
 const LoginPage = lazy(() => import('@/pages/LoginPage'))
 const RegisterPage = lazy(() => import('@/pages/RegisterPage'))
 
+// Learner training pages
+const TrainingLibraryPage = lazy(() => import('@/pages/learn/TrainingLibraryPage'))
+const TrainingDetailPage = lazy(() => import('@/pages/learn/TrainingDetailPage'))
+const TrainingProgressPage = lazy(() => import('@/pages/learn/TrainingProgressPage'))
+
 // Governance admin pages
 const GovernanceLayout = lazy(() => import('@/components/governance/GovernanceLayout'))
 const GovernanceDashboard = lazy(() => import('@/pages/governance/GovernanceDashboard'))
@@ -50,6 +55,11 @@ function AppRoutes() {
         <Route path="/orgs" element={<OrganizationsPage />} />
         <Route path="/orgs/:slug" element={<OrgDetailPage />} />
         <Route path="/progress" element={<ProgressPage />} />
+
+        {/* Learner training routes */}
+        <Route path="/learn/content" element={<TrainingLibraryPage />} />
+        <Route path="/learn/content/:id" element={<TrainingDetailPage />} />
+        <Route path="/learn/progress" element={<TrainingProgressPage />} />
 
         {/* Admin-only governance routes */}
         <Route element={<AdminRoute />}>

@@ -110,6 +110,26 @@ Goal: Close gaps discovered after the initial admin UI build — real data every
 - [x] 26 new backend tests in `test_admin_ui_stabilization.py`; full suite 243/243 passing
 - [x] TypeScript check: zero errors
 
+## Learner-Facing Published Content Experience — Phase 1 (Current)
+
+Goal: Close the loop from published content to learner training and tracked progress.
+
+- [x] `GET /api/learn/content` — browse published content for a region; filters: content_type, domain, difficulty, search; pagination; includes version_id and published_at
+- [x] `GET /api/learn/content/{id}?region_code=UK` — detail with `safe_payload` (answer keys stripped); 404 for unpublished/wrong-region; `requires_local_disclaimer` and `requires_protocol_note` flags from RegionPublishingRule
+- [x] `POST /api/learn/content/{id}/attempt` — deterministic scoring; creates LearnerFailureAnalytics record; returns score, feedback, failed_dimensions, recommended_next_step; no AI, no invented clinical feedback
+- [x] `GET /api/learn/progress` — aggregates LearnerFailureAnalytics by user_id: total_attempts, average_score, attempts_by_content_type, weakness_breakdown (dimension fail rates), recent_attempts
+- [x] Answer key security: `correct_answer_or_expected_response`, `expected_decision`, `expected_pharmacist_action`, `hidden_risk`, `failure_mode`, `critical_fail`, `scoring_rubric` never returned to learners
+- [x] `TrainingLibraryPage` (`/learn/content`) — region selector, filters, content cards (not table), empty state with admin guidance
+- [x] `TrainingDetailPage` (`/learn/content/:id`) — metadata header, safe payload viewer, attempt form, result panel; region-aware
+- [x] `TrainingProgressPage` (`/learn/progress`) — stats cards, weakness bar chart, attempts-by-type chips, recent attempts list
+- [x] Navigation updated — "Training Library" (BookOpenIcon) and "Training Progress" (TrophyIcon) added for all authenticated users
+- [x] `learnApi.ts` — separate Axios instance with JWT refresh; `browse`, `getDetail`, `submitAttempt`, `getProgress`
+- [x] `types/learn.ts` — full TypeScript types for all learner schemas
+- [x] App.tsx — three new lazy routes under `/learn/`
+- [x] 25 new backend tests in `test_learner_experience.py`; full suite 268/268 passing
+- [x] TypeScript check: zero errors
+- [x] CONTENT_GOVERNANCE.md, DEVELOPMENT.md, ROADMAP.md updated
+
 ## Phase 2 — Users & Auth (continued)
 
 Goal: Full user-facing auth and profile features.

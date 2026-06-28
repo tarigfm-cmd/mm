@@ -18,6 +18,7 @@ from app.routes import auth as auth_router
 from app.routes import content as content_router
 from app.routes import evidence as evidence_router
 from app.routes import health as health_router
+from app.routes import learn as learn_router
 from app.routes import materials as materials_router
 from app.routes import organizations as orgs_router
 from app.routes import progress as progress_router
@@ -85,6 +86,7 @@ app.include_router(progress_router.router)
 app.include_router(content_router.router)
 app.include_router(evidence_router.router)
 app.include_router(analytics_router.router)
+app.include_router(learn_router.router)
 
 
 @app.exception_handler(Exception)
