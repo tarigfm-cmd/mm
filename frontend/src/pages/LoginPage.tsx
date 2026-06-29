@@ -134,7 +134,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-xs text-primary-300 mt-6">
-          Powered by Claude AI · For educational use only
+          Community pharmacy training · Not a substitute for clinical judgment
         </p>
       </div>
     </div>

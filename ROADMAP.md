@@ -371,75 +371,45 @@ Goal: Security, operations, and deployment hardening before opening to beta user
 - [x] TypeScript check: zero errors
 - [x] Frontend build: `npm run build` succeeds
 
-## Phase 2 — Users & Auth (continued)
+## Next Steps
 
-Goal: Full user-facing auth and profile features.
+- [ ] PayPal real sandbox end-to-end test run (credentials, plan ID, webhook, activation)
+- [ ] Production server deployment (see DEPLOYMENT.md)
+- [ ] SMTP integration for password reset email delivery
+- [ ] UI/UX design polish pass (visual consistency, mobile layout)
+- [ ] Real pharmacy content authoring, clinical review, and publishing workflow
+- [ ] Email verification flow
 
-- [ ] Email verification with token link
-- [x] Password reset flow (complete — Auth Security Phase 2)
-- [ ] Profile pages & progress history
-- [ ] Session replacement: auth tokens instead of anonymous UUIDs
-- [ ] Frontend login / register pages
-- [ ] Protected frontend routes
+## Future Roadmap
 
-Domain packages: `domains/users/`, `domains/organizations/`
-
-## Phase 3 — Extended Learning Modes
-
-Goal: Move beyond single-case chat to a full training ecosystem.
-
+**Learning Modes**
 - [ ] OTC triage simulations (symptom → triage decision tree)
 - [ ] Prescription screening workflows
-- [ ] Drug interaction detection engine
-- [ ] Red flag identification exercises
-- [ ] Patient counselling scripts (scored roleplay)
-- [ ] OSCE station builder & runner
+- [ ] Drug interaction detection exercises
+- [ ] Patient counselling scored roleplay
+- [ ] OSCE station builder and runner
 - [ ] Pharmacy games: flashcards, drag-and-drop label matching, dose calculator
 - [ ] Adaptive assessment engine (item difficulty calibration)
-- [ ] AI tutor chat (open-ended pharmacy Q&A)
+- [ ] AI tutor (open-ended pharmacy Q&A) — safety-gated, requires content governance review
 
-Domain packages: `domains/assessments/`, `domains/osce/`, `domains/games/`
-
-## Phase 4 — Content Management & Evidence
-
-Goal: Institutional-grade content quality and governance.
-
-- [ ] Evidence-based content review workflow
-- [ ] Content versioning with reviewer approval gates
-- [x] CSV bulk content import for educators (implemented in Phase 1 milestone)
+**Content & Evidence**
 - [ ] Medical content tagging (BNF chapter, NICE guideline, MHRA alert)
 - [ ] Evidence source linking (PubMed, NICE, BNF)
 - [ ] Educator content studio (create custom cases)
 
-Domain packages: `domains/content_review/`
-
-## Phase 5 — Analytics & Monetisation
-
-Goal: Institutional reporting and sustainable revenue.
-
-- [ ] Learner progress dashboard (scores over time, weak areas)
-- [ ] Cohort analytics for educators and institutions
-- [x] Subscription plans (Free / Pro / Institution / Enterprise) — internal billing foundation complete
-- [x] Usage-based plan limits — training session metering, calendar-month window
-- [ ] Stripe billing integration (live checkout — not yet connected)
-- [ ] Admin dashboard (users, content, revenue)
+**Analytics & Reporting**
+- [ ] Institution cohort analytics and learner outcome tracking
 - [ ] Export to PDF/CSV (certificates, progress reports)
+- [ ] Admin revenue and usage dashboard
 
-Domain packages: `domains/analytics/`, `domains/subscriptions/`
-
-## Phase 6 — Scale & Polish
-
-Goal: Production hardening and reach.
-
-- [ ] Redis caching for generated scenarios
-- [ ] Vector search for related materials (pgvector or Pinecone)
-- [ ] WebSocket real-time feedback (replace polling)
-- [ ] Internationalisation (i18n) — Arabic, Spanish priority
-- [ ] Mobile-responsive improvements
+**Scale & Infrastructure**
+- [ ] Redis caching for generated content
 - [ ] CI/CD pipeline (GitHub Actions)
-- [ ] Kubernetes deployment manifests
 - [ ] GDPR-compliant data deletion
+- [ ] Internationalisation (i18n) — Arabic, Spanish priority
+- [ ] Mobile-responsive redesign
+- [ ] Kubernetes deployment manifests
 
 ---
 
-*Phases are indicative. Scope within each phase may shift based on user feedback.*
+*Milestone sections above record the full implementation history. This roadmap reflects planned next steps; scope may shift based on user feedback and operational priorities.*
