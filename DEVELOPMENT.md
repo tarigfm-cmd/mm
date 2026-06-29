@@ -515,7 +515,7 @@ When `startSession` returns 402, `TrainingDetailPage` shows a paywall card with 
 
 ### Upgrading during beta
 
-Online checkout is not connected. To upgrade a user:
+PayPal sandbox checkout is connected. Users can subscribe via the `/billing` page (see "PayPal Checkout & Webhooks" section below for sandbox setup). Platform admins can also assign plans directly:
 
 ```bash
 # Via API (requires superuser JWT)
