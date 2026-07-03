@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import {
@@ -93,6 +93,9 @@ export default function TrainingLibraryPage() {
   const [total, setTotal] = useState(0)
   const [pages, setPages] = useState(1)
   const [loading, setLoading] = useState(true)
+  // Prevents the page-change effect from firing a duplicate load on initial mount
+  // (the filter-change effect already calls load(1) on mount).
+  const didMountRef = useRef(false)
 
   const load = useCallback(async (pg: number) => {
     setLoading(true)
@@ -122,8 +125,15 @@ export default function TrainingLibraryPage() {
   }, [region, contentType, difficulty]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    // Skip initial mount — the filter effect above already called load(1).
+    // After that, fire whenever the user navigates to a different page.
+    if (!didMountRef.current) {
+      didMountRef.current = true
+      return
+    }
     load(page)
-  }, [page, load])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page])
 
   const handleFilter = (e: React.FormEvent) => {
     e.preventDefault()
