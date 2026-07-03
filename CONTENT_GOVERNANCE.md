@@ -295,6 +295,17 @@ python scripts/preview_content_package.py /path/to/community_pharmacy_mega_conte
 
 The script uses an isolated in-memory SQLite database. It prints a JSON summary of file counts, validation errors, and detected content types, then exits 0 (clean) or 1 (validation errors).
 
+#### Local commit verification command
+
+Run a controlled commit against an isolated in-memory database to verify import behavior before touching any real DB:
+
+```bash
+cd /path/to/mm
+python scripts/commit_content_package.py /path/to/community_pharmacy_mega_content_bank_v2_csv.zip
+```
+
+The script commits the package once, prints DB counts by content type, verifies no items are published and all region rules are inactive, then re-commits the same ZIP to confirm idempotency (second pass must create 0 items). All writes are discarded on exit — Docker is not required. Exits 0 if all checks pass, 1 on failure.
+
 #### Real package dry-run results (v2 — 2026-06-27)
 
 `community_pharmacy_mega_content_bank_v2_csv.zip` was verified clean:
