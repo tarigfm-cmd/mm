@@ -208,9 +208,14 @@ export default function ImportCenter() {
       {/* Recent import history */}
       {recentImports.length > 0 && (
         <section>
-          <div className="flex items-center gap-2 mb-3">
-            <ClockIcon className="w-4 h-4 text-gray-400" />
-            <h2 className="text-sm font-semibold text-gray-700">Recent imports</h2>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <ClockIcon className="w-4 h-4 text-gray-400" />
+              <h2 className="text-sm font-semibold text-gray-700">Recent imports</h2>
+            </div>
+            <a href="/admin/governance/import/batches" className="text-xs text-primary-600 hover:underline">
+              View all →
+            </a>
           </div>
           <div className="space-y-2">
             {recentImports.map((imp) => (

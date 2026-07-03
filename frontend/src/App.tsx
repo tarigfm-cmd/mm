@@ -34,6 +34,8 @@ const AdminBillingPlansPage = lazy(() => import('@/pages/admin/AdminBillingPlans
 const GovernanceLayout = lazy(() => import('@/components/governance/GovernanceLayout'))
 const GovernanceDashboard = lazy(() => import('@/pages/governance/GovernanceDashboard'))
 const ImportCenter = lazy(() => import('@/pages/governance/ImportCenter'))
+const ImportBatchesPage = lazy(() => import('@/pages/governance/ImportBatchesPage'))
+const ImportBatchDetailPage = lazy(() => import('@/pages/governance/ImportBatchDetailPage'))
 const ApprovalBatchesPage = lazy(() => import('@/pages/governance/ApprovalBatchesPage'))
 const ContentLibraryPage = lazy(() => import('@/pages/governance/ContentLibraryPage'))
 const ContentDetailPage = lazy(() => import('@/pages/governance/ContentDetailPage'))
@@ -84,6 +86,8 @@ function AppRoutes() {
           <Route path="/admin/governance" element={<GovernanceLayout />}>
             <Route index element={<GovernanceDashboard />} />
             <Route path="import" element={<ImportCenter />} />
+            <Route path="import/batches" element={<ImportBatchesPage />} />
+            <Route path="import/batches/:id" element={<ImportBatchDetailPage />} />
             <Route path="approval-batches" element={<ApprovalBatchesPage />} />
             <Route path="content" element={<ContentLibraryPage />} />
             <Route path="content/:id" element={<ContentDetailPage />} />

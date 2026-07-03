@@ -308,6 +308,7 @@ export interface ImportBatchRead {
   uploaded_by_user_id: string | null
   created_at: string
   committed_at: string | null
+  warnings_json: string[] | null
 }
 
 export interface ImportBatchListResponse {

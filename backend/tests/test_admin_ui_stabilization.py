@@ -316,10 +316,9 @@ async def test_import_batches_list_returns_metadata(client: AsyncClient, fresh_e
     assert item["status"] == "committed"
     assert item["total_rows"] == 100
     assert item["created_items"] == 99
-    # Clinical payload must not appear
+    # Raw clinical payload must not appear; warnings_json is admin metadata and is allowed
     assert "payload_json" not in item
     assert "errors_json" not in item
-    assert "warnings_json" not in item
 
 
 @pytest.mark.asyncio

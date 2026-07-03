@@ -6,15 +6,17 @@ import {
   DocumentMagnifyingGlassIcon,
   BookOpenIcon,
   GlobeAltIcon,
+  ClockIcon,
 } from '@heroicons/react/24/outline'
 
 const GOV_NAV = [
-  { to: '/admin/governance',                 label: 'Overview',          icon: HomeModernIcon,             end: true  },
-  { to: '/admin/governance/import',          label: 'Import',            icon: ArrowUpTrayIcon,            end: false },
-  { to: '/admin/governance/approval-batches',label: 'Approval Batches',  icon: CheckBadgeIcon,             end: false },
-  { to: '/admin/governance/content',         label: 'Content Library',   icon: DocumentMagnifyingGlassIcon,end: false },
-  { to: '/admin/governance/evidence',        label: 'Evidence',          icon: BookOpenIcon,               end: false },
-  { to: '/admin/governance/regions',         label: 'Regions',           icon: GlobeAltIcon,               end: false },
+  { to: '/admin/governance',                        label: 'Overview',        icon: HomeModernIcon,             end: true  },
+  { to: '/admin/governance/import',                 label: 'Import',          icon: ArrowUpTrayIcon,            end: true  },
+  { to: '/admin/governance/import/batches',         label: 'Import History',  icon: ClockIcon,                  end: false },
+  { to: '/admin/governance/approval-batches',       label: 'Approval Batches',icon: CheckBadgeIcon,             end: false },
+  { to: '/admin/governance/content',                label: 'Content Library', icon: DocumentMagnifyingGlassIcon,end: false },
+  { to: '/admin/governance/evidence',               label: 'Evidence',        icon: BookOpenIcon,               end: false },
+  { to: '/admin/governance/regions',                label: 'Regions',         icon: GlobeAltIcon,               end: false },
 ]
 
 export default function GovernanceLayout() {

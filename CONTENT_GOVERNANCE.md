@@ -245,8 +245,8 @@ Both endpoints accept multipart/form-data with a `file` field (`.csv` or `.zip`)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/content/import/batches` | List recent import batch metadata. Query param: `limit` (1–100, default 20). Requires `content.import`. Safe metadata only — no clinical payloads, no raw `warnings_json`/`errors_json`. |
-| `GET` | `/api/content/import/batches/{id}` | Get a single import batch record. Requires `content.import`. 404 if not found. |
+| `GET` | `/api/content/import/batches` | List recent import batch metadata. Query param: `limit` (1–100, default 20). Requires `content.import`. Returns `warnings_json` (admin metadata); never returns raw clinical payloads (`payload_json`, `errors_json`). |
+| `GET` | `/api/content/import/batches/{id}` | Get a single import batch record including `warnings_json`. Requires `content.import`. 404 if not found. |
 
 #### Supported files
 
@@ -490,8 +490,23 @@ The governance UI lives at `/admin/governance` and is accessible only to `is_sup
    b. Run Preview — validates all rows, shows error breakdown, detects duplicates
    c. Optionally link an Approval Batch (pre-approved by pharmacist team)
    d. Confirm commit — writes ContentItems + ContentVersions to DB as pending_review
+   e. "Recent imports" panel shows last 5 batches with "View all →" link to Import History
 
-2. Approval Batches (/admin/governance/approval-batches)
+2. Import History (/admin/governance/import/batches)
+   - Full paginated list of all ImportBatch records (up to 100 per load)
+   - Columns: source file, package type, status badge, row counts (total/valid/invalid/skipped),
+     records created (items/versions/evidence/rules), imported-at, committed-at
+   - "Details →" link per row to the batch detail page
+
+3. Import Batch Detail (/admin/governance/import/batches/:id)
+   - Header: batch ID (monospace), filename, status badge, created/committed timestamps
+   - Row counts grid and records-created grid
+   - Duplicate/skip summary (amber callout, shown only when invalid or skipped > 0)
+   - Warnings list from `warnings_json` field
+   - Linked approval batch ID (if set)
+   - Blue info notice: all imported content is NOT learner-visible (pending_review)
+
+4. Approval Batches (/admin/governance/approval-batches)
    - Create an ApprovalBatch before import if the content was externally reviewed
    - Batch records the team, timestamp, statement, and optional manifest hash
 

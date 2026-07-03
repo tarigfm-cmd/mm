@@ -58,6 +58,9 @@ export default function GovernanceDashboard() {
   }, [])
 
   const needsUpdate = summary?.by_status?.needs_update ?? 0
+  const publishedCount = summary?.by_status?.published ?? 0
+  const totalItems = summary?.total_items ?? 0
+  const nothingPublished = !loading && totalItems > 0 && publishedCount === 0
 
   return (
     <div className="space-y-8">
@@ -65,6 +68,20 @@ export default function GovernanceDashboard() {
         <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
           <ExclamationCircleIcon className="w-4 h-4 flex-shrink-0" />
           {error}
+        </div>
+      )}
+
+      {nothingPublished && (
+        <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-300 rounded-xl text-sm text-amber-800">
+          <ExclamationCircleIcon className="w-5 h-5 flex-shrink-0 mt-0.5 text-amber-600" />
+          <div>
+            <p className="font-semibold">No content is published</p>
+            <p className="mt-0.5 text-xs text-amber-700">
+              All {totalItems.toLocaleString()} items are in <span className="font-mono">pending_review</span> status
+              and are <strong>not learner-visible</strong>. Content must be clinically reviewed and published
+              per region before learners can access it.
+            </p>
+          </div>
         </div>
       )}
 

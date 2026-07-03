@@ -434,6 +434,7 @@ class ImportBatchRead(BaseModel):
     uploaded_by_user_id: Optional[uuid.UUID]
     created_at: datetime
     committed_at: Optional[datetime]
+    warnings_json: Optional[list[str]] = None
 
 
 class ImportBatchListResponse(BaseModel):
