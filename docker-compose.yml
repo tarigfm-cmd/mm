@@ -57,6 +57,11 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       UPLOAD_DIR: /app/uploads
       SENTRY_DSN: ${SENTRY_DSN:-}
+      PAYPAL_ENV: ${PAYPAL_ENV:-sandbox}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-}
+      PAYPAL_WEBHOOK_ID: ${PAYPAL_WEBHOOK_ID:-}
+      PAYPAL_SKIP_WEBHOOK_VERIFY: ${PAYPAL_SKIP_WEBHOOK_VERIFY:-False}
     volumes:
       - ./backend:/app
       - uploads_data:/app/uploads
@@ -78,7 +83,7 @@ services:
       target: builder
     container_name: clinical-ai-frontend
     environment:
-      VITE_API_URL: http://backend:8000
+      VITE_API_URL: http://localhost:8000
     volumes:
       - ./frontend:/app
       - /app/node_modules
