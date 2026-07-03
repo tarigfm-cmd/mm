@@ -7,6 +7,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy import func, or_, select, update
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import (
@@ -727,6 +728,23 @@ async def import_commit(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except IntegrityError as exc:
+        await db.rollback()
+        orig = str(exc.orig) if exc.orig else str(exc)
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Import commit failed — database constraint violation. "
+                f"The package may contain duplicate external IDs or values that exceed "
+                f"column limits. Details: {orig[:400]}"
+            ),
+        )
+    except SQLAlchemyError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail=f"Import commit failed — database error. Details: {str(exc)[:400]}",
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -72,7 +72,9 @@ class ContentItem(Base):
     difficulty: Mapped[str | None] = mapped_column(String(50), nullable=True)
     region_scope: Mapped[list | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="draft", index=True)
-    # Deferred FK — added via ALTER TABLE after content_versions exists
+    # DEFERRABLE FK — checked at COMMIT, not at INSERT, to allow circular inserts
+    # (content_items → content_versions and content_versions → content_items).
+    # Migration 013 made this DEFERRABLE INITIALLY DEFERRED in PostgreSQL.
     current_version_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True, native_uuid=True),
         ForeignKey(
@@ -80,6 +82,8 @@ class ContentItem(Base):
             ondelete="SET NULL",
             use_alter=True,
             name="fk_content_item_current_version_id",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         nullable=True,
     )

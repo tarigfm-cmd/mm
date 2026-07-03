@@ -1122,3 +1122,128 @@ async def test_import_batch_record_created_on_commit(client: AsyncClient, fresh_
         assert batch.status == "committed"
         assert batch.package_type == "csv"
         assert batch.source_file_name == "case_bank_7500.csv"
+
+
+# ---------------------------------------------------------------------------
+# Regression tests — circular FK / PostgreSQL DEFERRABLE constraint
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_commit_bulk_rows_all_get_current_version_id(
+    client: AsyncClient, fresh_engine
+):
+    """
+    Regression: bulk commit of many rows must set current_version_id on every item.
+
+    Root cause (fixed in migration 013): content_items.current_version_id →
+    content_versions.id was NOT DEFERRABLE in PostgreSQL.  SQLAlchemy's unit-of-work
+    inserts ContentItems (with current_version_id already populated) before
+    ContentVersions exist in the DB, because use_alter=True removes the FK from
+    SQLAlchemy's dependency graph.  PostgreSQL enforced the FK at INSERT time and
+    raised IntegrityError on the very first row.
+
+    Migration 013 makes the FK DEFERRABLE INITIALLY DEFERRED so the check runs at
+    COMMIT time, by which point all versions exist.  SQLite never enforced this FK
+    so the bug was invisible in the existing test suite.
+    """
+    token, _, _ = await _setup_role_user(
+        fresh_engine, client,
+        {"email": "bulk@importpipeline.example", "username": "imp_bulk", "password": "BulkPass1!", "full_name": "Bulk"},
+        "institution_admin",
+    )
+    rows = [_case_row(case_id=f"CP-BULK-{i:04d}") for i in range(25)]
+    content = _csv(_CASE_HEADERS, rows)
+    resp = await client.post(
+        "/api/content/import/commit",
+        headers=_auth(token),
+        files={"file": ("case_bank_7500.csv", content, "text/csv")},
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["created_items"] == 25
+    assert data["created_versions"] == 25
+
+    async with AsyncSession(fresh_engine) as s:
+        items = (await s.execute(select(ContentItem))).scalars().all()
+        assert len(items) == 25
+        for item in items:
+            assert item.current_version_id is not None, (
+                f"Item {item.external_id} has no current_version_id — "
+                "circular FK was not deferred properly"
+            )
+            version = await s.get(ContentVersion, item.current_version_id)
+            assert version is not None
+            assert version.content_item_id == item.id
+            assert version.is_current is True
+
+
+@pytest.mark.asyncio
+async def test_commit_mixed_zip_bulk_all_items_have_version(
+    client: AsyncClient, fresh_engine
+):
+    """Bulk commit via ZIP: all created items across file types have current_version_id."""
+    token, _, _ = await _setup_role_user(
+        fresh_engine, client,
+        {"email": "zipbulk@importpipeline.example", "username": "imp_zipbulk", "password": "ZipBulk1!", "full_name": "ZipBulk"},
+        "institution_admin",
+    )
+    case_rows = [_case_row(case_id=f"CP-ZB-CASE-{i:03d}") for i in range(5)]
+    sim_rows = [_sim_row(sim_id=f"CP-ZB-SIM-{i:03d}") for i in range(5)]
+    pkg = _make_zip({
+        "case_bank_7500.csv": _csv(_CASE_HEADERS, case_rows),
+        "simulation_blueprints_1200.csv": _csv(_SIM_HEADERS, sim_rows),
+    })
+    resp = await client.post(
+        "/api/content/import/commit",
+        headers=_auth(token),
+        files={"file": ("pkg.zip", pkg, "application/zip")},
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["created_items"] == 10
+    assert data["created_versions"] == 10
+
+    async with AsyncSession(fresh_engine) as s:
+        items = (await s.execute(select(ContentItem))).scalars().all()
+        for item in items:
+            assert item.current_version_id is not None
+            version = await s.get(ContentVersion, item.current_version_id)
+            assert version is not None
+            assert version.content_item_id == item.id
+
+
+@pytest.mark.asyncio
+async def test_commit_rerun_is_idempotent_no_error(client: AsyncClient, fresh_engine):
+    """
+    Re-committing the same package must skip all rows and return 201 (not 500/422).
+
+    Ensures that the dedup logic works correctly and a second commit is safe.
+    """
+    token, _, _ = await _setup_role_user(
+        fresh_engine, client,
+        {"email": "idem@importpipeline.example", "username": "imp_idem", "password": "IdemPass1!", "full_name": "Idem"},
+        "institution_admin",
+    )
+    rows = [_case_row(case_id=f"CP-IDEM-{i:03d}") for i in range(5)]
+    content = _csv(_CASE_HEADERS, rows)
+
+    r1 = await client.post(
+        "/api/content/import/commit",
+        headers=_auth(token),
+        files={"file": ("case_bank_7500.csv", content, "text/csv")},
+    )
+    assert r1.status_code == 201
+    assert r1.json()["created_items"] == 5
+
+    r2 = await client.post(
+        "/api/content/import/commit",
+        headers=_auth(token),
+        files={"file": ("case_bank_7500.csv", content, "text/csv")},
+    )
+    assert r2.status_code == 201
+    assert r2.json()["created_items"] == 0
+    assert r2.json()["skipped_duplicates"] >= 5
+
+    async with AsyncSession(fresh_engine) as s:
+        count = len((await s.execute(select(ContentItem))).scalars().all())
+        assert count == 5  # no duplicates were created
