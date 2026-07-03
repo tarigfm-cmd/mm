@@ -254,8 +254,8 @@ Both endpoints accept multipart/form-data with a `file` field (`.csv` or `.zip`)
 |----------|-----------------|
 | `case_bank_7500.csv` | `ContentItem` + `ContentVersion` (type `case`) |
 | `simulation_blueprints_1200.csv` | `ContentItem` + `ContentVersion` (type `simulation`) |
-| `osce_stations_400.csv` | `ContentItem` + `ContentVersion` (type `osce`) |
-| `prescription_screening_1200.csv` | `ContentItem` + `ContentVersion` (type `rx_screening`) |
+| `osce_stations_400.csv` | `ContentItem` + `ContentVersion` (type `osce_station`) |
+| `prescription_screening_1200.csv` | `ContentItem` + `ContentVersion` (type `prescription_screening`) |
 | `drills_1200.csv` | `ContentItem` + `ContentVersion` (type `drill`) |
 | `evidence_library.csv` | `EvidenceSource` records |
 | `localization_rules.csv` | `RegionPublishingRule` records (`is_active=False`) |
@@ -283,6 +283,40 @@ Both endpoints accept multipart/form-data with a `file` field (`.csv` or `.zip`)
 - Only filenames in the allowed set are accepted inside a ZIP.
 - The audit log records only safe metadata (`source_file`, counts). No clinical payload is logged.
 - The Excel dashboard (`community_pharmacy_mega_content_bank_v2_dashboard.xlsx`) is a human-readable reference only and is **never imported into the database**.
+
+#### Local preview command
+
+Run a dry-run preview against any content package without touching the production database:
+
+```bash
+cd /path/to/mm
+python scripts/preview_content_package.py /path/to/community_pharmacy_mega_content_bank_v2_csv.zip
+```
+
+The script uses an isolated in-memory SQLite database. It prints a JSON summary of file counts, validation errors, and detected content types, then exits 0 (clean) or 1 (validation errors).
+
+#### Real package dry-run results (v2 — 2026-06-27)
+
+`community_pharmacy_mega_content_bank_v2_csv.zip` was verified clean:
+
+| File | Rows | Valid | Invalid | Type |
+|------|------|-------|---------|------|
+| `case_bank_7500.csv` | 7500 | 7500 | 0 | `case` |
+| `simulation_blueprints_1200.csv` | 1200 | 1200 | 0 | `simulation` |
+| `osce_stations_400.csv` | 400 | 400 | 0 | `osce_station` |
+| `prescription_screening_1200.csv` | 1200 | 1200 | 0 | `prescription_screening` |
+| `drills_1200.csv` | 1200 | 1200 | 0 | `drill` |
+| `evidence_library.csv` | 20 | 20 | 0 | evidence sources |
+| `localization_rules.csv` | 4 | 4 | 0 | region rules |
+| `manifest.json`, `taxonomy.csv`, `games_rewards.csv`, `audit_checklist.csv`, `csv_import_schema.csv` | — | — | — | reference only |
+
+- **Total importable rows**: 11,524 (11,500 learner content + 20 evidence + 4 region rules)
+- **Validation errors**: 0
+- **Duplicate detection**: 0 within-upload duplicates
+- **Auto-publish on commit**: 0 items (all land in `pending_review`)
+- **Review status in package**: all values are pending variants — no items become `clinically_approved` without explicit `approval_batch_id` and `content.approve` permission
+- **Region rules on commit**: 4 rules created (UK, US, GCC, AU), all `is_active=False` pending admin activation
+- **Re-import idempotency**: second commit of the same ZIP creates 0 items, skips all 11,500+ as duplicates
 
 ### Evidence Sources
 
