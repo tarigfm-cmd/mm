@@ -2,194 +2,793 @@
 
 ## Prerequisites
 
-- Python 3.9+
-- Node.js 16+
-- Docker & Docker Compose (optional but recommended)
-- OpenAI API Key
+| Tool | Version |
+|------|---------|
+| Python | 3.11+ |
+| Node.js | 20+ |
+| Docker + Docker Compose | any recent |
+| Anthropic API key | from console.anthropic.com |
 
-## Quick Start with Docker
+## Environment Setup
 
 ```bash
-# 1. Clone and setup
-git clone <repo>
-cd mm
 cp .env.example .env
-
-# 2. Add your OpenAI API key to .env
-OPENAI_API_KEY=sk-...
-
-# 3. Start all services
-docker-compose up
-
-# 4. Access
-- Frontend: http://localhost:5173
-- Backend: http://localhost:8000
-- API Docs: http://localhost:8000/docs
 ```
 
-## Local Development (without Docker)
+Key variables to set in `.env`:
 
-### Backend Setup
+```env
+# Required for AI features
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Keep defaults for local Docker dev
+DB_PASSWORD=postgres
+SECRET_KEY=change-me-in-production-min-50-chars-000000000000
+
+# Auth / JWT (generate with: python3 -c "import secrets; print(secrets.token_hex(32))")
+JWT_SECRET_KEY=change-me-jwt-secret-key-min-32-chars-00000000000
+JWT_ALGORITHM=HS256
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+JWT_REFRESH_TOKEN_EXPIRE_DAYS=30
+```
+
+## Option A — Docker Compose (recommended)
+
+```bash
+docker-compose up
+```
+
+Services started:
+- **PostgreSQL 15** on port 5432
+- **Redis 7** on port 6379
+- **Backend** (hot-reload) on port 8000
+- **Frontend** (Vite dev) on port 5173
+
+Access:
+- App: http://localhost:5173
+- API: http://localhost:8000
+- Docs: http://localhost:8000/docs
+
+## Option B — Local (no Docker)
+
+### Backend
+
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+
+# You need a running PostgreSQL and Redis, then:
+cp ../.env.example .env
+# Edit .env with your local DB/Redis URLs
+
+uvicorn app.main:app --reload
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+For local dev without Docker, the Vite proxy falls back to `http://localhost:8000`
+(configurable via `BACKEND_URL` env var if your backend runs elsewhere).
+
+## Production Deployment
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the full production deployment guide including:
+- Required environment variables and security flags
+- Alembic migration command (`alembic upgrade head`)
+- Docker Compose start sequence
+- Health check verification
+- First admin user creation
+- PayPal live setup
+- Password reset limitation and workarounds
+- Deployment checklist summary
+
+## Running Tests
+
+### Backend
 
 ```bash
 cd backend
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+# All tests with coverage
+pytest tests/ -v --cov=app
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Create .env in backend directory
-cp ../.env.example .env
-
-# Run migrations (when ready)
-# alembic upgrade head
-
-# Start server
-uvicorn app.main:app --reload
+# Fast (no coverage)
+pytest tests/ -v
 ```
 
-### Frontend Setup
+Tests use an in-memory SQLite database — no PostgreSQL or Redis required.
+
+#### Import pipeline tests
+
+```bash
+# Run only the import pipeline test suite
+pytest tests/test_import_pipeline.py -v
+
+# Run a specific test
+pytest tests/test_import_pipeline.py::test_preview_single_csv_success -v
+```
+
+The import tests use small synthetic CSV data generated in-memory. The real content bank ZIP is never required. Each test gets a fully isolated in-memory database via the `fresh_engine` fixture.
+
+### Frontend TypeScript check
 
 ```bash
 cd frontend
-
-# Install dependencies
-npm install
-
-# Start development server
-npm run dev
+npx tsc --noEmit
 ```
 
 ## Project Structure
 
-### Backend Architecture
-
 ```
-app/
-├── main.py              # FastAPI app entry
-├── config.py            # Configuration
-├── models/              # Pydantic models & DB schemas
-│   ├── scenario.py
-│   ├── material.py
-│   └── user.py
-├── routes/              # API endpoints
-│   ├── materials.py
-│   ├── scenarios.py
-│   └── health.py
-├── services/            # Business logic
-│   ├── ai_generator.py
-│   ├── material_processor.py
-│   └── evaluator.py
-└── utils/               # Utilities
-    ├── document_parser.py
-    └── validators.py
-```
-
-### Frontend Architecture
-
-```
-src/
-├── components/          # Reusable UI components
-│   ├── Navigation.tsx
-│   ├── ScenarioCard.tsx
-│   └── MessageBubble.tsx
-├── pages/               # Page components
-│   ├── Dashboard.tsx
-│   ├── MaterialsUpload.tsx
-│   └── ScenarioPage.tsx
-├── services/            # API calls
-│   └── api.ts
-├── store/               # State management (Zustand)
-│   └── scenarioStore.ts
-├── types/               # TypeScript types
-│   └── index.ts
-├── App.tsx              # Root component
-├── main.tsx             # Entry point
-└── index.css            # Tailwind styles
+mm/
+├── backend/
+│   ├── app/
+│   │   ├── core/
+│   │   │   ├── security.py      # PBKDF2 hashing + joserfc JWT
+│   │   │   └── dependencies.py  # FastAPI auth/RBAC dependencies
+│   │   ├── domains/             # Bounded-context stubs (Phase 3+)
+│   │   ├── models/
+│   │   │   ├── content.py       # Material ORM model
+│   │   │   ├── learning.py      # Scenario, Interaction ORM models
+│   │   │   └── identity.py      # User, Org, Role, Permission, etc.
+│   │   ├── routes/              # FastAPI routers
+│   │   │   ├── health.py
+│   │   │   ├── auth.py          # /api/auth endpoints
+│   │   │   ├── materials.py
+│   │   │   └── scenarios.py
+│   │   ├── schemas/
+│   │   │   ├── platform.py      # HealthResponse, PaginatedResponse
+│   │   │   ├── content.py       # Material schemas
+│   │   │   ├── learning.py      # Scenario & Interaction schemas
+│   │   │   └── identity.py      # User, Org, Auth schemas
+│   │   ├── services/
+│   │   │   ├── ai_service.py    # Anthropic Claude integration
+│   │   │   └── document_parser.py
+│   │   └── utils/validators.py
+│   ├── alembic/
+│   │   └── versions/
+│   │       ├── 001_initial_schema.py
+│   │       └── 002_identity_rbac.py
+│   ├── tests/
+│   │   ├── conftest.py          # SQLite async test fixtures
+│   │   ├── test_health.py
+│   │   ├── test_materials.py
+│   │   ├── test_security.py     # Password + JWT tests
+│   │   └── test_rbac.py         # Schema + role/permission tests
+│   └── requirements.txt
+└── frontend/
+    └── src/
+        ├── store/appStore.ts    # Zustand platform store
+        ├── services/api.ts      # Typed API client
+        └── types/index.ts       # TypeScript interfaces
 ```
 
-## API Endpoints
+## Key Design Decisions
 
-### Materials
-- `POST /api/materials/upload` - Upload clinical materials
-- `GET /api/materials/list` - List uploaded materials
+**UUIDs everywhere** — All primary keys use `sqlalchemy.Uuid` (not `postgresql.UUID`) for cross-database compatibility between SQLite (tests) and PostgreSQL (production).
 
-### Scenarios
-- `POST /api/scenarios/generate` - Generate scenarios from materials
-- `GET /api/scenarios` - List all scenarios
-- `GET /api/scenarios/{id}` - Get specific scenario
-- `POST /api/scenarios/{id}/answer` - Submit answer with AI feedback
+**Background text extraction** — File upload returns immediately; text extraction runs as a FastAPI `BackgroundTask`. The frontend polls `GET /api/materials/{id}` until `has_content: true`.
 
-## Environment Variables
+**Anonymous sessions** — No auth in Phase 1. Browser generates a UUID stored in `localStorage` and sends it as `X-Session-Id` header so interactions can be associated across requests.
 
-```
-# API
-DEBUG=True
-OPENAI_API_KEY=your_key_here
-OPENAI_MODEL=gpt-4-turbo-preview
+**AI service** — `app/services/ai_service.py` handles both scenario generation and answer evaluation via the Anthropic Python SDK. The AI model is configured via `AI_MODEL` env var (default: `claude-sonnet-4-6`).
 
-# Database
-DATABASE_URL=postgresql://user:password@localhost:5432/clinical_ai
+## Database Migrations
 
-# Features
-ENABLE_S3=False
-UPLOAD_DIR=./uploads
+Migrations use Alembic with psycopg2 (sync) while the app uses asyncpg.
+
+```bash
+# Run migrations against running PostgreSQL
+cd backend
+alembic upgrade head
+
+# Create new migration
+alembic revision --autogenerate -m "description"
 ```
 
-## Testing
+In development the app auto-creates tables via `Base.metadata.create_all` on startup (lifespan event). Use Alembic for production.
 
-### Backend Tests
+## Adding a New Domain Module
+
+1. Add a package under `backend/app/domains/<name>/`
+2. Create `models.py`, `schemas.py`, `router.py`, `service.py`
+3. Register the router in `backend/app/main.py`
+4. Create an Alembic migration for new tables
+5. Add TypeScript types in `frontend/src/types/index.ts`
+6. Add API methods in `frontend/src/services/api.ts`
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for module boundary conventions.
+
+## Full Local E2E Journey
+
+This section describes how to exercise both the admin and learner journeys end-to-end in a local development environment.
+
+### Prerequisites
+
+1. Start the stack: `docker-compose up`
+2. Verify the API is up: `curl http://localhost:8000/api/health`
+3. App should be at `http://localhost:5173`
+
+### Step 1 — Seed published content (dev only)
+
+A fresh database has no published content. Without published content, the learner Training Library is empty.
+
+```bash
+# From repo root — requires the Docker Compose backend to be running:
+python scripts/dev_seed_published_content.py
+```
+
+This creates:
+- One superuser: `dev-admin@pharmlearn.dev` / `DevAdmin1!`
+- One drill content item (non-clinical dose conversion framework question) published to UK
+
+The script is **idempotent** — safe to run multiple times. It refuses to run against production database hosts.
+
+### Step 2 — Admin journey
+
+1. Open `http://localhost:5173/login`
+2. Sign in as `dev-admin@pharmlearn.dev` / `DevAdmin1!`
+3. Click **Governance** (shown only to superusers)
+4. **Dashboard** — stat cards show total/pending/approved/published counts
+5. **Import Package** — upload a CSV or ZIP preview → commit → see import history
+6. **Approval Batches** — create a batch, set team name and regions
+7. **Content Library** — search by title/external ID, filter by status/type
+8. **Content Detail** — view versions, submit clinical review, publish/unpublish per region
+9. **Evidence Sources** — add and update evidence records; overdue items appear in amber alert
+10. **Region Rules** — CRUD for publishing requirements per region
+
+To publish imported content:
+1. Import Center → preview CSV/ZIP → commit → content lands in `pending_review`
+2. Content Library → open item → submit clinical review (decision: Approved)
+3. Content Detail → publish for UK
+4. Content now appears in learner Training Library
+
+### Step 3 — Learner journey
+
+1. Open `http://localhost:5173/register` to create a new account (or sign in if already registered)
+2. After login you land at `http://localhost:5173/learn/content`
+3. Region selector defaults to UK — change to see other regions
+4. Click **Start training** on any item
+5. Step through the guided training flow (briefing → red flags → decision → counseling)
+6. Submit — see score, dimension feedback, and expert answer reveal
+7. Visit `http://localhost:5173/learn/progress` to see cumulative stats
+8. Click **Profile** in the sidebar to update your name/username
+
+### Manual content publish (without seed script)
+
+If you prefer to publish via the UI rather than the seed script:
+
+```
+Register as admin → Governance → Import Package
+→ upload sample CSV (see CONTENT_GOVERNANCE.md for format)
+→ Preview → Commit
+→ Content Library → open item → Clinical Review (Approved)
+→ Publish for UK
+```
+
+Alternatively, use `scripts/preview_content_package.py` to validate a package before importing.
+
+## Auth Flow
+
+### Frontend auth pages
+
+| URL | Page |
+|-----|------|
+| `/login` | LoginPage — email + password, inline error, return-URL redirect, "Forgot password?" link |
+| `/register` | RegisterPage — email, username, full name, password + confirm-password |
+| `/forgot-password` | ForgotPasswordPage — email form; generic success; dev-only reset URL block |
+| `/reset-password?token=...` | ResetPasswordPage — new + confirm password; on success → `/login` |
+| `/profile` | ProfilePage — view/edit full name + username, account status, logout, change password section |
+
+### Token storage
+
+| Token | Storage | Notes |
+|-------|---------|-------|
+| Access token | Zustand memory store | Never written to localStorage or cookies |
+| Refresh token | localStorage `pharmlearn_rt` | Rotated on every use; revoked on logout |
+
+### Key behaviours
+
+- After login or register, users land on `/learn/content` (or the originally requested URL for guarded pages).
+- `ProtectedRoute` preserves the attempted URL as `state.from` and `LoginPage` reads it after sign-in.
+- 401 responses from non-auth endpoints silently trigger a background token refresh; if refresh fails, the user is redirected to `/login`.
+- Login errors (wrong credentials → 401) are shown as inline form errors — not toasts — because the response interceptor suppresses 401 toasts.
+- Logout calls `POST /api/auth/logout` (best-effort) to revoke the server-side refresh token, then clears Zustand and localStorage.
+
+### Auth API methods (`authApi` in `api.ts`)
+
+| Method | Endpoint | Notes |
+|--------|----------|-------|
+| `login(credentials)` | `POST /api/auth/login` | Stores both tokens |
+| `register(data)` | `POST /api/auth/register` | Returns `UserRead`; auto-login in UI |
+| `me()` | `GET /api/auth/me` | Returns current `UserRead` |
+| `updateMe(data)` | `PATCH /api/auth/me` | `{full_name?, username?}` |
+| `logout()` | `POST /api/auth/logout` | Best-effort server revoke |
+| `refresh(rt)` | `POST /api/auth/refresh` | Used by `useAuthInit` hook |
+| `forgotPassword(data)` | `POST /api/auth/forgot-password` | Always generic response |
+| `resetPassword(data)` | `POST /api/auth/reset-password` | Token from query string |
+| `changePassword(data)` | `POST /api/auth/change-password` | Requires valid access token |
+
+### Password reset dev flow
+
+The platform has no SMTP server. In development, enable the reset URL in the API response:
+
+```env
+# .env
+EXPOSE_RESET_TOKEN_IN_DEV=true
+```
+
+Then the `POST /api/auth/forgot-password` response includes `reset_url` for any existing user. The `/forgot-password` page displays this URL in an amber dev-mode block when the server returns it.
+
+**Token behaviour:**
+- SHA-256 hash stored; raw token never persisted
+- 60-minute expiry (configurable via `PASSWORD_RESET_TOKEN_EXPIRE_MINUTES`)
+- Single-use: `used_at` set on consumption
+- Latest-only policy: requesting a new token invalidates all previous unused tokens for that user
+- On success: all active refresh tokens revoked (forces re-login on other devices)
+
+**Change password (`POST /api/auth/change-password`):**
+- Requires authentication (access token)
+- Verifies `current_password` against stored hash
+- Rejects `new_password` identical to current password
+- Enforces rules: min 8 chars, 1 uppercase, 1 digit
+- Revokes all active refresh tokens on success
+
+## Admin Governance UI
+
+The content governance section lives at `/admin/governance` and is guarded by `is_superuser`.
+
+### Route map
+
+| URL | Page |
+|-----|------|
+| `/admin/governance` | GovernanceDashboard (stats + quick links) |
+| `/admin/governance/import` | ImportCenter (CSV/ZIP preview → commit wizard) |
+| `/admin/governance/approval-batches` | ApprovalBatchesPage (team sign-off records) |
+| `/admin/governance/content` | ContentLibraryPage (paginated table with filters) |
+| `/admin/governance/content/:id` | ContentDetailPage (item detail, versions, reviews, publish) |
+| `/admin/governance/evidence` | EvidenceManagementPage (evidence sources, due-for-review alert) |
+| `/admin/governance/regions` | RegionRulesPage (live CRUD for RegionPublishingRule records) |
+
+### Access control
+
+The `AdminRoute` component (rendered before `GovernanceLayout`) checks `currentUser.is_superuser`.
+Non-superusers see an "Insufficient permissions" screen instead of the governance UI.
+Backend RBAC enforces the same constraint on every API call — the frontend gate is presentational only.
+
+### Governance API client
+
+`frontend/src/services/governanceApi.ts` — separate Axios instance with the same JWT refresh interceptor pattern as `api.ts`. All import endpoints are multipart/form-data with extended timeouts (preview 300 s, commit 600 s).
+
+API objects exported:
+- `importApi` — preview and commit multipart uploads
+- `approvalBatchApi` — list and create approval batches
+- `contentApi` — list (with `search`, `status`, `content_type`, `domain` filters), get, create, versions, reviews, publish, unpublish
+- `evidenceApi` — list, create, update, dueForReview
+- `governanceSummaryApi` — single aggregate call for the dashboard stat cards
+- `importBatchApi` — list and get import batch metadata (no clinical payloads)
+- `regionRulesApi` — list, create, update region publishing rules
+
+### Import rules (enforced in UI + backend)
+
+- Only CSV or ZIP content packages may be uploaded. The Excel dashboard must NOT be uploaded here.
+- Always run Preview before committing — the "Commit Import" button is disabled until preview shows zero errors.
+- All committed items land in `pending_review`; nothing is auto-published.
+- Commit requires explicit confirmation via `ConfirmActionDialog`.
+- Publish and Unpublish actions each require explicit per-region confirmation.
+
+## Learner Training UI
+
+The learner training section is accessible to any authenticated user at `/learn/`.
+
+### Route map
+
+| URL | Page |
+|-----|------|
+| `/learn/content` | TrainingLibraryPage — browse published content with region/type/difficulty/search filters |
+| `/learn/content/:id?region=UK` | TrainingDetailPage — step-based guided training: flow → session → steps → submit → result |
+| `/learn/progress` | TrainingProgressPage — sessions, scores, dimension breakdown, recommendation |
+
+### Learner API client
+
+`frontend/src/services/learnApi.ts` — separate Axios instance with the same JWT refresh interceptor pattern. Exports `learnApi` with:
+- `browse` — list published content
+- `getDetail` — fetch safe content detail
+- `getTrainingFlow` — fetch step blueprint per content type (no hidden fields)
+- `startSession` — create `LearnerTrainingSession`
+- `submitSession` — submit all responses; returns dimension feedback + reveal summary
+- `submitAttempt` — Phase-1 single-attempt endpoint (kept for compatibility)
+- `getProgress` — comprehensive progress summary
+
+### Training engine routes
+
+```bash
+GET  /api/learn/content/{id}/training-flow?region_code=UK   # step blueprint
+POST /api/learn/content/{id}/sessions                        # start session
+POST /api/learn/sessions/{session_id}/submit                 # submit all responses
+```
+
+Run engine tests:
+
 ```bash
 cd backend
-pytest tests/
-pytest tests/ -v --cov=app
+pytest tests/test_training_engine.py -v
 ```
 
-### Frontend Tests
+### Key learner UX constraints
+
+- Region selector defaults to `UK`. Changing region reloads the library.
+- Empty library state explicitly tells users that an admin must publish content first.
+- Answer/scoring keys are never returned by the detail or flow endpoints — only in the submit response as `reveal_summary`.
+- Sessions are user-scoped. Users cannot submit another user's session (403).
+- Completed sessions cannot be re-submitted (409).
+- Progress page shows session-level data (completed_sessions, average_score_percent) plus attempt-level dimension breakdown.
+- Progress page uses `LearnerFailureAnalytics` + `LearnerTrainingSession` — separate from the Scenario progress page.
+
+### Frontend TypeScript checks
+
+Run after any frontend change:
+
 ```bash
 cd frontend
-npm test
+npx tsc --noEmit
 ```
 
-## Next Steps: AI Integration
+All governance pages and API client are fully typed. `ContentItemListItem` includes `external_id: string | null`. New types (`GovernanceSummary`, `ImportBatchRead`, `ImportBatchListResponse`, `RegionPublishingRuleRead/Create/Update`) are defined in `frontend/src/types/governance.ts`.
 
-1. **Document Processing**
-   - Extract text from PDFs/images using PyPDF2 or pytesseract
-   - Store in vector database (Pinecone, Weaviate)
+## Subscription & Billing
 
-2. **Scenario Generation**
-   - Use LangChain + OpenAI for context-aware generation
-   - Implement prompt engineering for medical accuracy
+Plans, entitlements, and usage metering — no live payment processor connected (beta).
 
-3. **Interactive Learning**
-   - WebSocket support for real-time feedback
-   - Store conversation history
-   - Analytics dashboard
+### Plans
 
-## Troubleshooting
+| Code | Price | Sessions/month | OSCE | Games | Institution | Admin |
+|------|-------|----------------|------|-------|-------------|-------|
+| `free` | Free | 20 | No | No | No | No |
+| `pro` | £19.99/mo | 1,000 | Yes | Yes | No | No |
+| `institution` | £99/mo | 100,000 | Yes | Yes | Yes | No |
+| `enterprise` | £499/mo | Unlimited | Yes | Yes | Yes | Yes |
 
-### Backend connection issues
+Plans are seeded idempotently on startup via `_seed_subscription_plans()` in `main.py`.
+
+### Default plan
+
+All registered users get the **free** plan entitlement by default (no `UserSubscription` row required — entitlement service falls back to `free`).
+
+Only a platform admin (`is_superuser=True`) can assign a plan to a user.
+
+### Entitlement service
+
+`backend/app/services/entitlements.py`:
+
+| Function | Purpose |
+|----------|---------|
+| `get_user_current_subscription(db, user_id)` | Active subscription or `None` |
+| `get_effective_plan(db, user_id)` | Plan from subscription, else free plan |
+| `can_start_training_session(db, user_id, is_superuser)` | `(bool, reason)` — admins bypass |
+| `record_usage_event(db, user_id, event_type, ...)` | Insert `UsageEvent`; caller commits |
+| `count_monthly_usage(db, user_id, event_type)` | Count events in current calendar month |
+
+### Billing API routes
+
+| Method | Endpoint | Auth |
+|--------|----------|------|
+| `GET` | `/api/billing/plans` | Any authenticated user |
+| `GET` | `/api/billing/me/subscription` | Any authenticated user |
+| `GET` | `/api/billing/me/usage` | Any authenticated user |
+| `POST` | `/api/billing/me/subscription/cancel` | Any authenticated user |
+| `POST` | `/api/billing/admin/users/{user_id}/subscription` | Superuser only |
+| `GET` | `/api/billing/admin/plans` | Superuser only |
+| `PATCH` | `/api/billing/admin/plans/{plan_code}` | Superuser only |
+| `GET` | `/api/billing/admin/paypal/status` | Superuser only |
+
+### Training session entitlement
+
+`POST /api/learn/content/{id}/sessions` now:
+1. Calls `can_start_training_session()` before creating the session
+2. Returns **HTTP 402** with `"Training session limit reached for your current plan."` if the monthly limit is exceeded
+3. Records `training_session_started` usage event on success
+
+`POST /api/learn/sessions/{session_id}/submit` records `training_session_completed` on commit.
+
+### Frontend billing pages
+
+| URL | Page |
+|-----|------|
+| `/billing` | BillingPage — current plan, payment state badge, period dates, pending activation panel, cancel button, session usage bar, all 4 plan cards |
+| `/billing/success` | PayPalSuccessPage — pending state message, auto-polls up to 8 times, refresh button |
+| `/billing/cancel` | PayPalCancelPage — checkout cancelled, no state mutation |
+| `/admin/billing/plans` | AdminBillingPlansPage — PayPal readiness panel + plan table with PayPal Plan ID editor and checkout status (superuser only) |
+
+The **Billing** link appears in `Navigation` for all authenticated users.
+
+When `startSession` returns 402, `TrainingDetailPage` shows a paywall card with a link to `/billing`.
+
+`ProfilePage` shows the user's plan name as a badge (fetched from `GET /api/billing/me/subscription`).
+
+### Upgrading during beta
+
+PayPal sandbox checkout is connected. Users can subscribe via the `/billing` page (see "PayPal Checkout & Webhooks" section below for sandbox setup). Platform admins can also assign plans directly:
+
 ```bash
-# Check if backend is running
-curl http://localhost:8000/api/health
-
-# Check logs
-docker logs clinical_ai_backend
+# Via API (requires superuser JWT)
+curl -X POST http://localhost:8000/api/billing/admin/users/{user_id}/subscription \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"plan_code": "pro"}'
 ```
 
-### Database issues
+Or use the admin assignment endpoint from the Swagger docs at `http://localhost:8000/docs`.
+
+### Running billing tests
+
 ```bash
-# Reset database
-docker-compose down -v
-docker-compose up db
+cd backend
+pytest tests/test_billing.py -v
 ```
 
-## Resources
+22 tests covering: plan listing, free-tier fallback, subscription assignment, entitlement service (limit enforcement, superuser bypass, unlimited plans).
 
-- [FastAPI Docs](https://fastapi.tiangolo.com/)
-- [React Docs](https://react.dev/)
-- [OpenAI API](https://platform.openai.com/docs)
-- [LangChain Docs](https://docs.langchain.com/)
+## PayPal Checkout & Webhooks
+
+### Environment variables
+
+```env
+# PayPal credentials (leave blank to disable checkout; returns HTTP 503 gracefully)
+PAYPAL_CLIENT_ID=
+PAYPAL_CLIENT_SECRET=
+PAYPAL_WEBHOOK_ID=
+PAYPAL_ENV=sandbox          # "sandbox" or "live"
+PAYPAL_SKIP_WEBHOOK_VERIFY=false  # Set "true" in dev/test only. NEVER true in production.
+
+# Public URL for PayPal return/cancel redirects
+APP_PUBLIC_URL=http://localhost:5173
+```
+
+### Plan mapping — external_paypal_plan_id
+
+Each paid plan has an `external_paypal_plan_id` column in `subscription_plans`. This stores
+the PayPal billing plan ID (e.g. `P-XXXXXXXXXXXXXXXXXX`) created in the PayPal dashboard
+or Catalog API.
+
+**If a paid plan has no `external_paypal_plan_id`, checkout returns HTTP 422** —
+"PayPal checkout is not configured for this plan yet." The plan button on the billing page
+also shows "Checkout not configured for this plan yet." in place of the PayPal button.
+
+To set the PayPal plan ID for a plan, use the admin UI or API:
+
+**Admin UI (recommended):**
+1. Sign in as a superuser
+2. Navigate to `/admin/billing/plans`
+3. Click **Edit** next to the plan, paste the `P-XXXXXXXXXXXXXXXXXX` ID, click **Save**
+
+**API (superuser JWT required):**
+```bash
+curl -X PATCH http://localhost:8000/api/billing/admin/plans/pro \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"external_paypal_plan_id": "P-XXXXXXXXXXXXXXXXXX"}'
+```
+
+**Direct DB (if API is unavailable):**
+```sql
+UPDATE subscription_plans SET external_paypal_plan_id = 'P-XXXXXXXXXXXXXXXXXX'
+WHERE code = 'pro';
+```
+
+The internal `plan_code` (e.g. "pro") is **never sent to PayPal** — only `external_paypal_plan_id`
+is used in the PayPal subscription creation request.
+
+### PayPal sandbox setup sequence
+
+Complete setup in this order:
+
+1. **Create a sandbox app** — PayPal Developer Dashboard → My Apps & Credentials → Create App
+2. **Copy credentials** → set `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` in `.env`
+3. **Set `PAYPAL_ENV=sandbox`** in `.env`
+4. **Set `APP_PUBLIC_URL`** to the public base URL the backend is reachable at
+   - For ngrok local dev: `APP_PUBLIC_URL=https://<ngrok-id>.ngrok.io`
+   - For Cloudflare Tunnel: `APP_PUBLIC_URL=https://<your-tunnel>.trycloudflare.com`
+   - For production: `APP_PUBLIC_URL=https://app.pharmlearn.dev`
+5. **Expose the backend** (local dev only) — choose one tunnel tool:
+   - **ngrok**: `ngrok http 8000`
+   - **Cloudflare Tunnel** (free, no account required for quick tunnels): `cloudflared tunnel --url http://localhost:8000`
+6. **Create a PayPal subscription product and billing plan** in the Catalog API or PayPal Dashboard
+   — note the `P-XXXXXXXXXXXXXXXXXX` billing plan ID
+7. **Paste the PayPal Plan ID** into `/admin/billing/plans` (sign in as superuser → Edit → Save)
+   — or use `PATCH /api/billing/admin/plans/pro` API
+8. **Register the webhook** in PayPal Developer Dashboard:
+   - URL: `{APP_PUBLIC_URL}/api/billing/webhooks/paypal`
+   - The exact URL is shown on `/admin/billing/plans` with a copy button
+   - Subscribe to at least: `BILLING.SUBSCRIPTION.CREATED`, `BILLING.SUBSCRIPTION.ACTIVATED`,
+     `BILLING.SUBSCRIPTION.UPDATED`, `BILLING.SUBSCRIPTION.RENEWED`,
+     `BILLING.SUBSCRIPTION.CANCELLED`, `BILLING.SUBSCRIPTION.SUSPENDED`,
+     `BILLING.SUBSCRIPTION.EXPIRED`, `BILLING.SUBSCRIPTION.PAYMENT.FAILED`,
+     `BILLING.SUBSCRIPTION.PAYMENT.SUCCEEDED`
+9. **Copy the Webhook ID** → set `PAYPAL_WEBHOOK_ID` in `.env`
+   > **Warning:** Each time you register a new webhook URL in the PayPal Developer Portal, PayPal
+   > generates a new Webhook ID. After updating `PAYPAL_WEBHOOK_ID` in `.env`, you must
+   > **force-recreate** the backend container (not just restart it) so that the `lru_cache` on
+   > `get_paypal_provider()` picks up the new value:
+   > ```bash
+   > docker compose up -d --force-recreate backend
+   > ```
+   > A plain `docker compose restart backend` is **not sufficient** — it reuses the cached provider.
+10. **Verify readiness** at `/admin/billing/plans` — all credentials should show "Configured",
+    no missing requirements, and the Pro plan should show "Ready" in the Checkout column
+11. **Run a test checkout** from `/billing` — select Pro → Pay with PayPal → approve in sandbox
+
+### Webhook source-of-truth rule
+
+The return URL (`/billing/success`) **never activates the subscription**. It only shows
+"Payment received — activation pending." The webhook `BILLING.SUBSCRIPTION.ACTIVATED` is
+the authoritative event that sets `user_subscriptions.status = 'active'`.
+
+### PayPal config health endpoint
+
+`GET /api/billing/admin/paypal/status` (superuser only) returns a safe readiness report:
+- Credential presence as booleans — **never the actual values**
+- Derived webhook/success/cancel URLs
+- Per-plan `checkout_ready` flag
+- `missing_requirements` and `warnings` lists
+
+This endpoint is a **local config check only** — it does not call the PayPal API.
+
+### Sandbox test checklist
+
+- [ ] `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` set from sandbox app
+- [ ] `PAYPAL_ENV=sandbox`
+- [ ] `PAYPAL_WEBHOOK_ID` set from PayPal developer webhook registration
+- [ ] `external_paypal_plan_id` set on at least one paid plan (use `/admin/billing/plans`)
+- [ ] `APP_PUBLIC_URL` points to a publicly reachable URL (e.g. ngrok tunnel to port 8000)
+- [ ] `/admin/billing/plans` shows all credentials "Configured" and no missing requirements
+- [ ] `/admin/billing/plans` shows Pro plan as "Ready" in the Checkout column
+- [ ] `POST /api/billing/checkout/paypal { plan_code: "pro" }` returns `checkout_url`
+- [ ] Browser redirect to `checkout_url` shows PayPal subscription approval page
+- [ ] After approval, PayPal redirects to `{APP_PUBLIC_URL}/billing/success`
+- [ ] `/billing/success` shows "Payment received — activation pending" (does NOT activate)
+- [ ] PayPal sends `BILLING.SUBSCRIPTION.ACTIVATED` webhook → `user_subscriptions` updated to `active`
+- [ ] `payment_webhook_events` table has a `processed` row for the activation event
+
+### Checkout flow
+
+```
+POST /api/billing/checkout/paypal   { plan_code: "pro" }
+  → validates: PayPal configured, plan active, plan paid, external_paypal_plan_id set
+  → calls PayPal /v1/billing/subscriptions with external_paypal_plan_id (not plan code)
+  → returns { checkout_url, external_subscription_id, status, provider }
+  → records billing_checkout_started usage event (only on success)
+  → Frontend redirects user to checkout_url (PayPal approval page)
+  → User approves → PayPal redirects to {APP_PUBLIC_URL}/billing/success
+  → PayPal POSTs BILLING.SUBSCRIPTION.ACTIVATED webhook (source of truth)
+  → Webhook activates UserSubscription — never the return URL
+```
+
+Missing credentials → HTTP 503 "PayPal checkout is not configured yet."
+Missing `external_paypal_plan_id` → HTTP 422 "PayPal checkout is not configured for this plan yet."
+
+### Success and cancel pages
+
+| URL | Behaviour |
+|-----|-----------|
+| `/billing/success` | Shows "Payment received by PayPal. Subscription activates once confirmed." Fetches current subscription status. Does NOT activate the plan itself. |
+| `/billing/cancel` | Shows "Checkout cancelled. No payment taken." Links back to `/billing`. |
+
+### Webhook endpoint
+
+```
+POST /api/billing/webhooks/paypal   (no auth required — verified by PayPal signature)
+```
+
+- Verifies signature via `/v1/notifications/verify-webhook-signature` (unless `PAYPAL_SKIP_WEBHOOK_VERIFY=true`)
+- `PAYPAL_SKIP_WEBHOOK_VERIFY` must only be `true` in dev/test. Production rejects without valid signature.
+- Missing `PAYPAL_WEBHOOK_ID` → rejected (fail-closed)
+- Idempotent: duplicate events return `{ status: "already_processed" }`
+- On `BILLING.SUBSCRIPTION.ACTIVATED` for a new subscriber:
+  1. Looks up `PaymentCheckoutSession` by `external_subscription_id`
+  2. Creates `UserSubscription(status=active)` from the checkout session
+  3. Marks the checkout session `activated`
+- For upgrades: resolves existing `UserSubscription` by `external_subscription_id`, then falls back to `custom_id` (user UUID)
+- Unresolvable events stored with `processed_status="failed"` — no crash
+- Raw webhook body is never stored; only a safe `payload_summary` is persisted
+
+| PayPal event | Subscription status | Period dates updated? |
+|---|---|---|
+| `BILLING.SUBSCRIPTION.CREATED` | `ignored` | No — informational only |
+| `BILLING.SUBSCRIPTION.ACTIVATED` | `active` | Yes — sets `current_period_start` and `current_period_end` |
+| `BILLING.SUBSCRIPTION.UPDATED` | `ignored` | No — informational only |
+| `BILLING.SUBSCRIPTION.RENEWED` | `active` | Yes — advances both dates |
+| `BILLING.SUBSCRIPTION.PAYMENT.SUCCEEDED` | `active` | Yes — advances both dates |
+| `PAYMENT.SALE.COMPLETED` | `active` | Yes — if billing_info present |
+| `BILLING.SUBSCRIPTION.CANCELLED` | `canceled` | No — preserves `current_period_end` |
+| `BILLING.SUBSCRIPTION.SUSPENDED` | `past_due` | No — preserves all dates |
+| `BILLING.SUBSCRIPTION.EXPIRED` | `expired` | No — preserves all dates |
+| `BILLING.SUBSCRIPTION.PAYMENT.FAILED` | `past_due` | No — preserves `current_period_end` |
+
+Period dates are extracted from `resource.billing_info.last_payment.time` (preferred for renewals), falling back to `resource.start_time` for period_start, and `resource.billing_info.next_billing_time` for period_end. The `extract_paypal_period_dates(resource)` helper in `paypal.py` handles all parsing and None-safety.
+
+### Pending checkout tracking
+
+`PaymentCheckoutSession` is created whenever a PayPal checkout URL is successfully obtained:
+- `status=pending_activation` — checkout started, awaiting webhook
+- `status=activated` — webhook fired, `UserSubscription` created or updated
+- `status=cancelled` — user abandoned checkout
+
+`GET /api/billing/me/subscription` returns:
+- `pending_checkout`: most recent `pending_activation` session (provider, plan_code, hint of external ID)
+- `payment_state_message`: one of `free | active | pending_activation | past_due | canceled | expired`
+
+The success page polls `GET /me/subscription` up to 8 times (every 4 s) to detect activation. Activation is never performed client-side.
+
+### Cancellation
+
+`POST /api/billing/me/subscription/cancel` (authenticated):
+- **PayPal subscription** (has `external_provider=paypal` and `external_subscription_id`):
+  - Calls `PayPalProvider.cancel_subscription(external_id)` — requires PayPal configured
+  - If not configured → HTTP 503 with message explaining the constraint
+  - On success: `status=canceled`
+- **Manual subscription** (assigned by admin, no PayPal ID):
+  - Sets `cancel_at_period_end=True`; access continues until `current_period_end`
+
+The billing page shows a "Cancel subscription" button with confirmation for users with active subscriptions. After cancellation, the data reloads.
+
+### Provider abstraction
+
+`backend/app/services/payment_providers/`:
+- `base.py` — `PaymentProviderBase` ABC, `CheckoutResult`, `WebhookVerifyResult`; abstract methods: `create_subscription`, `verify_webhook`, `cancel_subscription`
+- `paypal.py` — `PayPalProvider` (httpx-based, async); `create_subscription` requires explicit `paypal_plan_id`; `cancel_subscription` calls `/v1/billing/subscriptions/{id}/cancel`
+- `registry.py` — `get_paypal_provider()` factory (lru_cached, reads from Settings)
+
+### Sandbox test sequence
+
+1. User clicks **Pay with PayPal** → `POST /checkout/paypal` → `PaymentCheckoutSession(status=pending_activation)` created
+2. User approves on PayPal → redirected to `/billing/success`
+3. `/billing/success` polls `GET /me/subscription` — shows `payment_state_message=pending_activation`
+4. PayPal POSTs `BILLING.SUBSCRIPTION.ACTIVATED` → webhook creates `UserSubscription(status=active)` with `current_period_start` / `current_period_end` extracted from `resource.start_time` and `resource.billing_info.next_billing_time`; marks checkout `activated`
+5. Next poll on success page detects `status=active` → shows green confirmation
+6. On renewal, PayPal POSTs `BILLING.SUBSCRIPTION.RENEWED` → `current_period_start` advances to `billing_info.last_payment.time`; `current_period_end` advances to `billing_info.next_billing_time`
+
+### Running PayPal tests
+
+```bash
+cd backend
+pytest tests/test_paypal.py -v
+```
+
+80 tests — no real PayPal credentials required. All HTTP calls are mocked.
+
+### Payment integrations excluded
+
+Stripe, Paddle, Lemon Squeezy, and Shopify are **permanently excluded** from this project.
+
+## Security Hardening (Beta Launch Gate)
+
+### Security headers
+
+All responses include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: strict-origin-when-cross-origin` — applied via ASGI middleware in `backend/app/main.py`.
+
+### Rate limiting
+
+Rate limiting is implemented via [SlowAPI](https://github.com/laurents/slowapi). The shared limiter lives in `backend/app/core/limiter.py`. Import from there (not `app.main`) to apply `@limiter.limit()` decorators on new routes without circular imports.
+
+In tests, an autouse fixture in `conftest.py` disables rate limiting:
+
+```python
+@pytest.fixture(autouse=True)
+def disable_rate_limiting():
+    from app.core.limiter import limiter
+    limiter.enabled = False
+    yield
+    limiter.enabled = True
+```
+
+### Production secret validation
+
+`_check_production_secrets(settings)` in `app/main.py` is called at startup (inside the lifespan). It raises `RuntimeError` if `SECRET_KEY` or `JWT_SECRET_KEY` contain known default placeholder strings, and logs `WARNING` if `EXPOSE_RESET_TOKEN_IN_DEV` or `PAYPAL_SKIP_WEBHOOK_VERIFY` are `True`. The check is skipped entirely when `DEBUG=True` (dev/test).

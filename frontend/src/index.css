@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  *:focus-visible {
+    @apply outline-none ring-2 ring-primary-500 ring-offset-1;
+  }
+}
+
+@layer utilities {
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+}
+
+/* Prose styles for markdown rendering */
+.prose h1, .prose h2, .prose h3 {
+  @apply font-semibold text-gray-900;
+}
+.prose p {
+  @apply text-gray-700 leading-relaxed;
+}
+.prose ul {
+  @apply list-disc list-inside space-y-1;
+}
+.prose ol {
+  @apply list-decimal list-inside space-y-1;
+}
+.prose strong {
+  @apply font-semibold text-gray-900;
+}
+.prose code {
+  @apply bg-gray-100 px-1 py-0.5 rounded text-xs font-mono;
+}

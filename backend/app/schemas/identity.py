@@ -1,0 +1,240 @@
+import uuid
+from datetime import datetime
+from typing import List, Optional
+
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in: int
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+def _validate_password_strength(v: str) -> str:
+    if not any(c.isupper() for c in v):
+        raise ValueError("Password must contain at least one uppercase letter.")
+    if not any(c.isdigit() for c in v):
+        raise ValueError("Password must contain at least one digit.")
+    return v
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+    reset_url: Optional[str] = None
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        return _validate_password_strength(v)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        return _validate_password_strength(v)
+
+
+class PasswordChangeResponse(BaseModel):
+    message: str
+
+
+# ---------------------------------------------------------------------------
+# Users
+# ---------------------------------------------------------------------------
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    username: str = Field(..., min_length=3, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    password: str = Field(..., min_length=8, max_length=128)
+    full_name: Optional[str] = Field(default=None, max_length=255)
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        if not any(c.isupper() for c in v):
+            raise ValueError("Password must contain at least one uppercase letter.")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must contain at least one digit.")
+        return v
+
+
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = Field(default=None, max_length=255)
+    username: Optional[str] = Field(default=None, min_length=3, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+
+
+class UserRead(BaseModel):
+    id: uuid.UUID
+    email: str
+    username: str
+    full_name: Optional[str]
+    is_active: bool
+    is_verified: bool
+    is_superuser: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ---------------------------------------------------------------------------
+# Organizations
+# ---------------------------------------------------------------------------
+
+ORG_TYPES = {
+    "university",
+    "pharmacy_chain",
+    "hospital",
+    "training_center",
+    "enterprise",
+    "individual_workspace",
+}
+
+
+class OrganizationCreate(BaseModel):
+    name: str = Field(..., min_length=2, max_length=255)
+    slug: str = Field(..., min_length=2, max_length=100, pattern=r"^[a-z0-9-]+$")
+    org_type: str = Field(default="individual_workspace")
+
+    @field_validator("org_type")
+    @classmethod
+    def valid_org_type(cls, v: str) -> str:
+        if v not in ORG_TYPES:
+            raise ValueError(f"org_type must be one of: {', '.join(sorted(ORG_TYPES))}")
+        return v
+
+
+class OrganizationUpdate(BaseModel):
+    """Partial update schema — all fields are optional."""
+
+    name: Optional[str] = Field(default=None, min_length=2, max_length=255)
+    slug: Optional[str] = Field(default=None, min_length=2, max_length=100, pattern=r"^[a-z0-9-]+$")
+    org_type: Optional[str] = None
+
+    @field_validator("org_type", mode="before")
+    @classmethod
+    def valid_org_type(cls, v: str | None) -> str | None:
+        if v is not None and v not in ORG_TYPES:
+            raise ValueError(f"org_type must be one of: {', '.join(sorted(ORG_TYPES))}")
+        return v
+
+
+class OrganizationRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    slug: str
+    org_type: str
+    is_active: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ---------------------------------------------------------------------------
+# Roles & Permissions
+# ---------------------------------------------------------------------------
+
+class PermissionRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    display_name: str
+    resource: str
+    action: str
+    description: Optional[str]
+
+    model_config = {"from_attributes": True}
+
+
+class RoleRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    display_name: str
+    description: Optional[str]
+    is_system_role: bool
+    permissions: List[PermissionRead] = []
+
+    model_config = {"from_attributes": True}
+
+
+# ---------------------------------------------------------------------------
+# Memberships
+# ---------------------------------------------------------------------------
+
+class OrganizationMembershipRead(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    organization_id: uuid.UUID
+    role_id: uuid.UUID
+    is_active: bool
+    joined_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class OrganizationMembershipCreate(BaseModel):
+    user_id: uuid.UUID
+    organization_id: uuid.UUID
+    role_id: uuid.UUID
+
+
+class OrgWithRole(BaseModel):
+    id: uuid.UUID
+    name: str
+    slug: str
+    org_type: str
+    is_active: bool
+    member_role: str
+    member_count: int
+    created_at: datetime
+
+    model_config = {"from_attributes": False}
+
+
+class MemberRead(BaseModel):
+    user_id: uuid.UUID
+    username: str
+    email: str
+    full_name: Optional[str]
+    role_name: str
+    role_display_name: str
+    is_active: bool
+    joined_at: datetime
+
+    model_config = {"from_attributes": False}
+
+
+class AddMemberRequest(BaseModel):
+    email: EmailStr
+    role_name: str = Field(default="student")
+
+
+class UpdateMemberRoleRequest(BaseModel):
+    role_name: str = Field(..., min_length=1)
