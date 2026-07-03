@@ -46,7 +46,7 @@ async def _register_login(client: AsyncClient, user: dict) -> str:
 async def _seed_plans(
     session: AsyncSession, *, with_paypal_plan_id: bool = False
 ) -> dict[str, SubscriptionPlan]:
-    """Seed test plans.
+    """Seed test plans (free / pro / institution / enterprise).
 
     Args:
         with_paypal_plan_id: If True, paid plans get a fake external_paypal_plan_id.
@@ -59,7 +59,14 @@ async def _seed_plans(
              allows_osce=True, allows_games=True,
              external_paypal_plan_id="P-PRO-FAKE-001" if with_paypal_plan_id else None),
         dict(code="institution", name="Institution", price_monthly_cents=9900,
+             max_training_sessions_per_month=100000,
+             allows_osce=True, allows_games=True, allows_institution_dashboard=True,
              external_paypal_plan_id="P-INST-FAKE-001" if with_paypal_plan_id else None),
+        dict(code="enterprise", name="Enterprise", price_monthly_cents=49900,
+             max_training_sessions_per_month=None,
+             allows_osce=True, allows_games=True, allows_institution_dashboard=True,
+             allows_admin_governance=True, allows_bulk_import=True,
+             external_paypal_plan_id="P-ENT-FAKE-001" if with_paypal_plan_id else None),
     ]
     result: dict[str, SubscriptionPlan] = {}
     for data in plans_data:
@@ -2085,3 +2092,192 @@ async def test_webhook_cancelled_preserves_period_end(
     assert updated.status == "canceled"
     assert updated.current_period_end is not None
     assert updated.current_period_end.replace(tzinfo=timezone.utc).date() == existing_period_end.date()
+
+
+# ---------------------------------------------------------------------------
+# Regression: ACTIVATED creates UserSubscription for institution and enterprise plans
+# ---------------------------------------------------------------------------
+
+INST_USER = {
+    "email": "pp_inst@example.com",
+    "username": "ppinst",
+    "password": "InstPass1!",
+    "full_name": "Institution User",
+}
+
+ENT_USER = {
+    "email": "pp_ent@example.com",
+    "username": "ppent",
+    "password": "EntPass1!",
+    "full_name": "Enterprise User",
+}
+
+
+@pytest.mark.asyncio
+async def test_webhook_activated_creates_subscription_for_institution_plan(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """BILLING.SUBSCRIPTION.ACTIVATED must create UserSubscription for institution plan."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        plans = await _seed_plans(s)
+        inst_plan_id = plans["institution"].id
+
+    token = await _register_login(client, INST_USER)
+    r_me = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    user_id = uuid.UUID(r_me.json()["id"])
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        cs = PaymentCheckoutSession(
+            user_id=user_id,
+            plan_id=inst_plan_id,
+            provider="paypal",
+            external_subscription_id="SUB-INST-NEW-1",
+            status="pending_activation",
+        )
+        s.add(cs)
+        await s.commit()
+
+    verify = _verified_result(
+        event_type="BILLING.SUBSCRIPTION.ACTIVATED",
+        event_id="EVT-INST-NEW-1",
+        resource_id="SUB-INST-NEW-1",
+    )
+    provider = _mock_provider(verify_result=verify)
+
+    with patch("app.routes.billing.get_paypal_provider", return_value=provider):
+        r = await client.post(
+            "/api/billing/webhooks/paypal",
+            content=_webhook_body("BILLING.SUBSCRIPTION.ACTIVATED", "EVT-INST-NEW-1"),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert r.status_code == 200
+    assert r.json()["status"] == "processed"
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        sub = (
+            await s.execute(
+                select(UserSubscription).where(
+                    UserSubscription.user_id == user_id,
+                    UserSubscription.external_subscription_id == "SUB-INST-NEW-1",
+                )
+            )
+        ).scalar_one_or_none()
+
+    assert sub is not None
+    assert sub.status == "active"
+    assert sub.external_provider == "paypal"
+    assert sub.plan_id == inst_plan_id
+
+
+@pytest.mark.asyncio
+async def test_webhook_activated_creates_subscription_for_enterprise_plan(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """BILLING.SUBSCRIPTION.ACTIVATED must create UserSubscription for enterprise plan."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        plans = await _seed_plans(s)
+        ent_plan = plans["enterprise"]
+        ent_plan_id = ent_plan.id
+        assert ent_plan.max_training_sessions_per_month is None
+        assert ent_plan.allows_admin_governance is True
+        assert ent_plan.allows_bulk_import is True
+
+    token = await _register_login(client, ENT_USER)
+    r_me = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    user_id = uuid.UUID(r_me.json()["id"])
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        cs = PaymentCheckoutSession(
+            user_id=user_id,
+            plan_id=ent_plan_id,
+            provider="paypal",
+            external_subscription_id="SUB-ENT-NEW-1",
+            status="pending_activation",
+        )
+        s.add(cs)
+        await s.commit()
+
+    verify = _verified_result(
+        event_type="BILLING.SUBSCRIPTION.ACTIVATED",
+        event_id="EVT-ENT-NEW-1",
+        resource_id="SUB-ENT-NEW-1",
+    )
+    provider = _mock_provider(verify_result=verify)
+
+    with patch("app.routes.billing.get_paypal_provider", return_value=provider):
+        r = await client.post(
+            "/api/billing/webhooks/paypal",
+            content=_webhook_body("BILLING.SUBSCRIPTION.ACTIVATED", "EVT-ENT-NEW-1"),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert r.status_code == 200
+    assert r.json()["status"] == "processed"
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        sub = (
+            await s.execute(
+                select(UserSubscription).where(
+                    UserSubscription.user_id == user_id,
+                    UserSubscription.external_subscription_id == "SUB-ENT-NEW-1",
+                )
+            )
+        ).scalar_one_or_none()
+
+    assert sub is not None
+    assert sub.status == "active"
+    assert sub.plan_id == ent_plan_id
+
+
+@pytest.mark.asyncio
+async def test_activated_subscription_plan_code_preserved_via_relationship(
+    fresh_engine: Any,
+) -> None:
+    """UserSubscription.plan.code must match the plan seeded at subscription creation (selectin join)."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        plans = await _seed_plans(s)
+        user_id = uuid.uuid4()
+        user = User(
+            id=user_id,
+            email="pp_join@example.com",
+            username="ppjoin",
+            full_name="Join Test User",
+            hashed_password="x",
+        )
+        s.add(user)
+        sub = UserSubscription(
+            user_id=user_id,
+            plan_id=plans["institution"].id,
+            status="active",
+            external_provider="paypal",
+            external_subscription_id="SUB-JOIN-1",
+        )
+        s.add(sub)
+        await s.commit()
+        sub_id = sub.id
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        loaded = await s.get(UserSubscription, sub_id)
+
+    assert loaded is not None
+    assert loaded.plan is not None
+    assert loaded.plan.code == "institution"
+    assert loaded.plan.allows_institution_dashboard is True
+
+
+# ---------------------------------------------------------------------------
+# Unit: PayPalProvider env parameter controls API base URL
+# ---------------------------------------------------------------------------
+
+def test_provider_sandbox_env_uses_sandbox_url() -> None:
+    """PayPalProvider(env='sandbox') must target the PayPal sandbox API."""
+    p = PayPalProvider(client_id="id", client_secret="secret", webhook_id="wh", env="sandbox")
+    assert "sandbox" in p._base_url
+
+
+def test_provider_live_env_uses_live_url() -> None:
+    """PayPalProvider(env='live') must target the production PayPal API, not sandbox."""
+    p = PayPalProvider(client_id="id", client_secret="secret", webhook_id="wh", env="live")
+    assert p._base_url == "https://api-m.paypal.com"
+    assert "sandbox" not in p._base_url

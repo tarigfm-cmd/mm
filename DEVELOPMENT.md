@@ -595,8 +595,11 @@ Complete setup in this order:
 3. **Set `PAYPAL_ENV=sandbox`** in `.env`
 4. **Set `APP_PUBLIC_URL`** to the public base URL the backend is reachable at
    - For ngrok local dev: `APP_PUBLIC_URL=https://<ngrok-id>.ngrok.io`
+   - For Cloudflare Tunnel: `APP_PUBLIC_URL=https://<your-tunnel>.trycloudflare.com`
    - For production: `APP_PUBLIC_URL=https://app.pharmlearn.dev`
-5. **Start ngrok** (local dev only): `ngrok http 8000` to expose the backend
+5. **Expose the backend** (local dev only) — choose one tunnel tool:
+   - **ngrok**: `ngrok http 8000`
+   - **Cloudflare Tunnel** (free, no account required for quick tunnels): `cloudflared tunnel --url http://localhost:8000`
 6. **Create a PayPal subscription product and billing plan** in the Catalog API or PayPal Dashboard
    — note the `P-XXXXXXXXXXXXXXXXXX` billing plan ID
 7. **Paste the PayPal Plan ID** into `/admin/billing/plans` (sign in as superuser → Edit → Save)
@@ -604,10 +607,20 @@ Complete setup in this order:
 8. **Register the webhook** in PayPal Developer Dashboard:
    - URL: `{APP_PUBLIC_URL}/api/billing/webhooks/paypal`
    - The exact URL is shown on `/admin/billing/plans` with a copy button
-   - Subscribe to at least: `BILLING.SUBSCRIPTION.ACTIVATED`, `BILLING.SUBSCRIPTION.CANCELLED`,
-     `BILLING.SUBSCRIPTION.SUSPENDED`, `BILLING.SUBSCRIPTION.EXPIRED`,
-     `BILLING.SUBSCRIPTION.PAYMENT.FAILED`
+   - Subscribe to at least: `BILLING.SUBSCRIPTION.CREATED`, `BILLING.SUBSCRIPTION.ACTIVATED`,
+     `BILLING.SUBSCRIPTION.UPDATED`, `BILLING.SUBSCRIPTION.RENEWED`,
+     `BILLING.SUBSCRIPTION.CANCELLED`, `BILLING.SUBSCRIPTION.SUSPENDED`,
+     `BILLING.SUBSCRIPTION.EXPIRED`, `BILLING.SUBSCRIPTION.PAYMENT.FAILED`,
+     `BILLING.SUBSCRIPTION.PAYMENT.SUCCEEDED`
 9. **Copy the Webhook ID** → set `PAYPAL_WEBHOOK_ID` in `.env`
+   > **Warning:** Each time you register a new webhook URL in the PayPal Developer Portal, PayPal
+   > generates a new Webhook ID. After updating `PAYPAL_WEBHOOK_ID` in `.env`, you must
+   > **force-recreate** the backend container (not just restart it) so that the `lru_cache` on
+   > `get_paypal_provider()` picks up the new value:
+   > ```bash
+   > docker compose up -d --force-recreate backend
+   > ```
+   > A plain `docker compose restart backend` is **not sufficient** — it reuses the cached provider.
 10. **Verify readiness** at `/admin/billing/plans` — all credentials should show "Configured",
     no missing requirements, and the Pro plan should show "Ready" in the Checkout column
 11. **Run a test checkout** from `/billing` — select Pro → Pay with PayPal → approve in sandbox
@@ -683,12 +696,14 @@ POST /api/billing/webhooks/paypal   (no auth required — verified by PayPal sig
   2. Creates `UserSubscription(status=active)` from the checkout session
   3. Marks the checkout session `activated`
 - For upgrades: resolves existing `UserSubscription` by `external_subscription_id`, then falls back to `custom_id` (user UUID)
-- Unresolvable events stored with `processed_status="unresolved"` — no crash
+- Unresolvable events stored with `processed_status="failed"` — no crash
 - Raw webhook body is never stored; only a safe `payload_summary` is persisted
 
 | PayPal event | Subscription status | Period dates updated? |
 |---|---|---|
+| `BILLING.SUBSCRIPTION.CREATED` | `ignored` | No — informational only |
 | `BILLING.SUBSCRIPTION.ACTIVATED` | `active` | Yes — sets `current_period_start` and `current_period_end` |
+| `BILLING.SUBSCRIPTION.UPDATED` | `ignored` | No — informational only |
 | `BILLING.SUBSCRIPTION.RENEWED` | `active` | Yes — advances both dates |
 | `BILLING.SUBSCRIPTION.PAYMENT.SUCCEEDED` | `active` | Yes — advances both dates |
 | `PAYMENT.SALE.COMPLETED` | `active` | Yes — if billing_info present |
@@ -747,7 +762,7 @@ cd backend
 pytest tests/test_paypal.py -v
 ```
 
-71 tests — no real PayPal credentials required. All HTTP calls are mocked.
+80 tests — no real PayPal credentials required. All HTTP calls are mocked.
 
 ### Payment integrations excluded
 
