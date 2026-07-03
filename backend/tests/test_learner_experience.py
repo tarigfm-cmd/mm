@@ -605,3 +605,92 @@ async def test_progress_weakness_breakdown(client: AsyncClient, fresh_engine):
     # Phase 2: dimension keys use full scoring engine names
     assert "red_flag_recognition" in wb
     assert wb["red_flag_recognition"] == 1.0
+
+
+# ===========================================================================
+# Regression: empty region must return 200 with empty list, never a 500
+# (PostgreSQL DISTINCT ON + ORDER BY mismatch caused 500 before fix)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_browse_empty_region_returns_200_not_error(client: AsyncClient, fresh_engine):
+    """Empty published content must return 200 {items:[], total:0} — never raise 500."""
+    token = await _register_and_login(client, _LEARNER_A)
+
+    # No published content exists — expect a clean empty response, not an error
+    r = await client.get("/api/learn/content", params={"region_code": "UK"}, headers=_auth(token))
+    assert r.status_code == 200
+    data = r.json()
+    assert data["items"] == []
+    assert data["total"] == 0
+    assert data["pages"] == 1
+
+
+@pytest.mark.asyncio
+async def test_browse_pending_review_hidden_from_learner(client: AsyncClient, fresh_engine):
+    """pending_review content must never appear in the learner browse endpoint."""
+    token = await _register_and_login(client, _LEARNER_A)
+
+    # Create a content item that is NOT published (pending_review)
+    await _create_published_item(fresh_engine, title="Hidden Pending", make_published=False)
+
+    r = await client.get("/api/learn/content", params={"region_code": "UK"}, headers=_auth(token))
+    assert r.status_code == 200
+    titles = [i["title"] for i in r.json()["items"]]
+    assert "Hidden Pending" not in titles
+
+
+@pytest.mark.asyncio
+async def test_browse_published_content_appears_for_correct_region(
+    client: AsyncClient, fresh_engine
+):
+    """Published content must appear for the correct region and be absent for others."""
+    token = await _register_and_login(client, _LEARNER_A)
+
+    await _create_published_item(fresh_engine, title="UK Published", region_code="UK")
+
+    # Correct region — item must appear
+    r_uk = await client.get(
+        "/api/learn/content", params={"region_code": "UK"}, headers=_auth(token)
+    )
+    assert r_uk.status_code == 200
+    assert any(i["title"] == "UK Published" for i in r_uk.json()["items"])
+
+    # Wrong region — item must not appear
+    r_us = await client.get(
+        "/api/learn/content", params={"region_code": "US"}, headers=_auth(token)
+    )
+    assert r_us.status_code == 200
+    assert not any(i["title"] == "UK Published" for i in r_us.json()["items"])
+
+
+@pytest.mark.asyncio
+async def test_browse_deduplicates_multiple_publications(client: AsyncClient, fresh_engine):
+    """Content item with multiple published records must appear only once in results."""
+    token = await _register_and_login(client, _LEARNER_A)
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    item_id, version_id, _ = await _create_published_item(
+        fresh_engine, title="Multi-Pub Item"
+    )
+
+    # Add a second published record for the same item (simulates re-publish)
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        from datetime import datetime, timezone, timedelta
+        extra_pub = PublicationRecord(
+            content_item_id=item_id,
+            content_version_id=version_id,
+            region_code="UK",
+            publication_status="published",
+            published_at=datetime.now(timezone.utc) + timedelta(seconds=1),
+        )
+        s.add(extra_pub)
+        await s.commit()
+
+    r = await client.get("/api/learn/content", params={"region_code": "UK"}, headers=_auth(token))
+    assert r.status_code == 200
+    items = r.json()["items"]
+    ids = [i["id"] for i in items]
+    assert ids.count(str(item_id)) == 1, "Content item must appear exactly once despite multiple publications"

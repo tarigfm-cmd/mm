@@ -197,6 +197,22 @@ async def browse_published_content(
             detail=f"content_type must be one of {sorted(CONTENT_TYPES)}",
         )
 
+    # Subquery: for each content item, pick the timestamp of its latest published record
+    # in this region. This replaces DISTINCT ON (content_item.id) which is PostgreSQL-only
+    # and would fail when ORDER BY doesn't start with the DISTINCT ON column.
+    latest_pub = (
+        select(
+            PublicationRecord.content_item_id,
+            func.max(PublicationRecord.published_at).label("published_at"),
+        )
+        .where(
+            PublicationRecord.region_code == region_code,
+            PublicationRecord.publication_status == "published",
+        )
+        .group_by(PublicationRecord.content_item_id)
+        .subquery("latest_pub")
+    )
+
     q = (
         select(
             ContentItem.id,
@@ -211,14 +227,16 @@ async def browse_published_content(
             ContentVersion.id.label("version_id"),
             ContentVersion.version_number,
         )
-        .join(PublicationRecord, PublicationRecord.content_item_id == ContentItem.id)
-        .join(ContentVersion, ContentVersion.id == PublicationRecord.content_version_id)
-        .where(
-            PublicationRecord.region_code == region_code,
-            PublicationRecord.publication_status == "published",
-            ContentItem.status == "published",
+        .join(latest_pub, latest_pub.c.content_item_id == ContentItem.id)
+        .join(
+            PublicationRecord,
+            (PublicationRecord.content_item_id == ContentItem.id)
+            & (PublicationRecord.published_at == latest_pub.c.published_at)
+            & (PublicationRecord.region_code == region_code)
+            & (PublicationRecord.publication_status == "published"),
         )
-        .distinct(ContentItem.id)
+        .join(ContentVersion, ContentVersion.id == PublicationRecord.content_version_id)
+        .where(ContentItem.status == "published")
     )
 
     if content_type:
