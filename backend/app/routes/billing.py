@@ -477,9 +477,7 @@ async def paypal_webhook(
     if existing is not None:
         return PayPalWebhookResponse(status="already_processed")
 
-    # Determine subscription status transition
-    new_sub_status = provider.event_to_subscription_status(verify_result.event_type)
-
+    # Phase 1: commit the event record immediately so it survives business-logic failures.
     webhook_event = PaymentWebhookEvent(
         provider="paypal",
         external_event_id=verify_result.external_event_id,
@@ -488,129 +486,156 @@ async def paypal_webhook(
         payload_summary_json=verify_result.payload_summary,
     )
     db.add(webhook_event)
+    try:
+        await db.commit()
+        await db.refresh(webhook_event)
+    except IntegrityError:
+        await db.rollback()
+        return PayPalWebhookResponse(status="already_processed")
 
+    # Phase 2: business logic — event is now durable regardless of outcome.
+    new_sub_status = provider.event_to_subscription_status(verify_result.event_type)
     processing_error: Optional[str] = None
 
-    if new_sub_status and verify_result.external_subscription_id:
-        # Resolve user subscription
-        user_sub = (
-            await db.execute(
-                select(UserSubscription).where(
-                    UserSubscription.external_subscription_id == verify_result.external_subscription_id,
-                    UserSubscription.external_provider == "paypal",
-                ).limit(1)
-            )
-        ).scalar_one_or_none()
-
-        if user_sub is None and verify_result.custom_id:
-            # Fall back to resolving via custom_id (user_id we set at checkout)
-            try:
-                user_uuid = uuid.UUID(verify_result.custom_id)
-                user_sub = (
-                    await db.execute(
-                        select(UserSubscription).where(
-                            UserSubscription.user_id == user_uuid,
-                            UserSubscription.status.in_(["active", "trialing", "past_due"]),
-                        ).order_by(UserSubscription.created_at.desc()).limit(1)
-                    )
-                ).scalar_one_or_none()
-            except ValueError:
-                pass
-
-        if user_sub is not None:
-            user_sub.status = new_sub_status
-            if verify_result.external_subscription_id:
-                user_sub.external_subscription_id = verify_result.external_subscription_id
-            user_sub.external_provider = "paypal"
-            # Update billing period dates only on active transitions; preserve on failure/cancel
-            if new_sub_status == "active":
-                if verify_result.period_start is not None:
-                    user_sub.current_period_start = verify_result.period_start
-                if verify_result.period_end is not None:
-                    user_sub.current_period_end = verify_result.period_end
-            webhook_event.processed_status = "processed"
-            # Mark any pending checkout session as activated
-            if new_sub_status == "active" and verify_result.external_subscription_id:
-                pending_cs = (
-                    await db.execute(
-                        select(PaymentCheckoutSession).where(
-                            PaymentCheckoutSession.external_subscription_id
-                            == verify_result.external_subscription_id,
-                            PaymentCheckoutSession.status == "pending_activation",
-                        ).limit(1)
-                    )
-                ).scalar_one_or_none()
-                if pending_cs is not None:
-                    pending_cs.status = "activated"
-                    pending_cs.completed_at = datetime.now(timezone.utc)
-        elif new_sub_status == "active":
-            # ACTIVATED for a brand-new subscriber: look up the pending checkout session
-            # to obtain user_id and plan_id, then create the UserSubscription.
-            checkout_session = (
+    try:
+        if new_sub_status and verify_result.external_subscription_id:
+            # Resolve existing user subscription by PayPal subscription ID
+            user_sub = (
                 await db.execute(
-                    select(PaymentCheckoutSession).where(
-                        PaymentCheckoutSession.external_subscription_id
-                        == verify_result.external_subscription_id,
-                        PaymentCheckoutSession.provider == "paypal",
+                    select(UserSubscription).where(
+                        UserSubscription.external_subscription_id == verify_result.external_subscription_id,
+                        UserSubscription.external_provider == "paypal",
                     ).limit(1)
                 )
             ).scalar_one_or_none()
 
-            if checkout_session is None and verify_result.custom_id:
-                # Fallback: find most recent pending checkout for this user
+            if user_sub is None and verify_result.custom_id:
+                # Fall back to resolving via custom_id (user_id set at checkout)
                 try:
-                    uid = uuid.UUID(verify_result.custom_id)
-                    checkout_session = (
+                    user_uuid = uuid.UUID(verify_result.custom_id)
+                    user_sub = (
                         await db.execute(
-                            select(PaymentCheckoutSession).where(
-                                PaymentCheckoutSession.user_id == uid,
-                                PaymentCheckoutSession.status == "pending_activation",
-                                PaymentCheckoutSession.provider == "paypal",
-                            ).order_by(PaymentCheckoutSession.created_at.desc()).limit(1)
+                            select(UserSubscription).where(
+                                UserSubscription.user_id == user_uuid,
+                                UserSubscription.status.in_(["active", "trialing", "past_due"]),
+                            ).order_by(UserSubscription.created_at.desc()).limit(1)
                         )
                     ).scalar_one_or_none()
                 except ValueError:
                     pass
 
-            if checkout_session is not None:
-                new_sub = UserSubscription(
-                    user_id=checkout_session.user_id,
-                    plan_id=checkout_session.plan_id,
-                    status="active",
-                    external_provider="paypal",
-                    external_subscription_id=verify_result.external_subscription_id,
-                    current_period_start=verify_result.period_start,
-                    current_period_end=verify_result.period_end,
-                )
-                db.add(new_sub)
-                checkout_session.status = "activated"
-                checkout_session.completed_at = datetime.now(timezone.utc)
+            if user_sub is not None:
+                user_sub.status = new_sub_status
+                if verify_result.external_subscription_id:
+                    user_sub.external_subscription_id = verify_result.external_subscription_id
+                user_sub.external_provider = "paypal"
+                # Update billing period dates only on active transitions; preserve on failure/cancel
+                if new_sub_status == "active":
+                    if verify_result.period_start is not None:
+                        user_sub.current_period_start = verify_result.period_start
+                    if verify_result.period_end is not None:
+                        user_sub.current_period_end = verify_result.period_end
                 webhook_event.processed_status = "processed"
+                # Mark any pending checkout session as activated
+                if new_sub_status == "active" and verify_result.external_subscription_id:
+                    pending_cs = (
+                        await db.execute(
+                            select(PaymentCheckoutSession).where(
+                                PaymentCheckoutSession.external_subscription_id
+                                == verify_result.external_subscription_id,
+                                PaymentCheckoutSession.status == "pending_activation",
+                            ).limit(1)
+                        )
+                    ).scalar_one_or_none()
+                    if pending_cs is not None:
+                        pending_cs.status = "activated"
+                        pending_cs.completed_at = datetime.now(timezone.utc)
+            elif new_sub_status == "active":
+                # ACTIVATED for a brand-new subscriber: look up the pending checkout session
+                # to obtain user_id and plan_id, then create the UserSubscription.
+                checkout_session = (
+                    await db.execute(
+                        select(PaymentCheckoutSession).where(
+                            PaymentCheckoutSession.external_subscription_id
+                            == verify_result.external_subscription_id,
+                            PaymentCheckoutSession.provider == "paypal",
+                        ).limit(1)
+                    )
+                ).scalar_one_or_none()
+
+                if checkout_session is None and verify_result.custom_id:
+                    # Fallback: find most recent pending checkout for this user
+                    try:
+                        uid = uuid.UUID(verify_result.custom_id)
+                        checkout_session = (
+                            await db.execute(
+                                select(PaymentCheckoutSession).where(
+                                    PaymentCheckoutSession.user_id == uid,
+                                    PaymentCheckoutSession.status == "pending_activation",
+                                    PaymentCheckoutSession.provider == "paypal",
+                                ).order_by(PaymentCheckoutSession.created_at.desc()).limit(1)
+                            )
+                        ).scalar_one_or_none()
+                    except ValueError:
+                        pass
+
+                if checkout_session is not None:
+                    new_sub = UserSubscription(
+                        user_id=checkout_session.user_id,
+                        plan_id=checkout_session.plan_id,
+                        status="active",
+                        external_provider="paypal",
+                        external_subscription_id=verify_result.external_subscription_id,
+                        current_period_start=verify_result.period_start,
+                        current_period_end=verify_result.period_end,
+                    )
+                    db.add(new_sub)
+                    checkout_session.status = "activated"
+                    checkout_session.completed_at = datetime.now(timezone.utc)
+                    webhook_event.processed_status = "processed"
+                else:
+                    processing_error = (
+                        f"No checkout session found for external_id="
+                        f"{verify_result.external_subscription_id} custom_id={verify_result.custom_id}"
+                    )
+                    webhook_event.processed_status = "failed"
+                    logger.warning("PayPal webhook unresolved: %s", processing_error)
             else:
-                webhook_event.processed_status = "unresolved"
+                # Known status transition but no matching subscription found
                 processing_error = (
-                    f"Could not resolve subscription for external_id="
+                    f"No active subscription found for external_id="
                     f"{verify_result.external_subscription_id} custom_id={verify_result.custom_id}"
                 )
+                webhook_event.processed_status = "failed"
                 logger.warning("PayPal webhook unresolved: %s", processing_error)
         else:
-            webhook_event.processed_status = "unresolved"
-            processing_error = (
-                f"Could not resolve subscription for external_id="
-                f"{verify_result.external_subscription_id} custom_id={verify_result.custom_id}"
-            )
-            logger.warning("PayPal webhook unresolved: %s", processing_error)
-    else:
-        webhook_event.processed_status = "processed"
+            # Informational event (e.g. CREATED, UPDATED) or missing subscription ID — no action needed
+            webhook_event.processed_status = "ignored"
 
-    webhook_event.processing_error = processing_error
-    webhook_event.processed_at = datetime.now(timezone.utc)
-
-    try:
+        webhook_event.processing_error = processing_error
+        webhook_event.processed_at = datetime.now(timezone.utc)
         await db.commit()
-    except IntegrityError:
+
+    except Exception as exc:
         await db.rollback()
-        return PayPalWebhookResponse(status="already_processed")
+        # Event is already committed from phase 1 — update it with failure status
+        processing_error = f"Processing error: {exc}"
+        webhook_event.processed_status = "failed"
+        webhook_event.processing_error = processing_error
+        webhook_event.processed_at = datetime.now(timezone.utc)
+        logger.exception(
+            "PayPal webhook business logic failed for event %s: %s",
+            verify_result.external_event_id,
+            exc,
+        )
+        try:
+            db.add(webhook_event)
+            await db.commit()
+        except Exception:
+            logger.error(
+                "Failed to record failure status for webhook event %s",
+                verify_result.external_event_id,
+            )
 
     return PayPalWebhookResponse(
         status=webhook_event.processed_status,

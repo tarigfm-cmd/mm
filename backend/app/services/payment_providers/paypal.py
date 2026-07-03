@@ -40,8 +40,11 @@ _PAYPAL_STATUS_MAP: dict[str, str] = {
 }
 
 # PayPal event type → internal subscription status transition
-_EVENT_TO_STATUS: dict[str, str] = {
+# None means the event is informational only: record it but no status change.
+_EVENT_TO_STATUS: dict[str, Optional[str]] = {
+    "BILLING.SUBSCRIPTION.CREATED": None,
     "BILLING.SUBSCRIPTION.ACTIVATED": "active",
+    "BILLING.SUBSCRIPTION.UPDATED": None,
     "BILLING.SUBSCRIPTION.RENEWED": "active",
     "BILLING.SUBSCRIPTION.CANCELLED": "canceled",
     "BILLING.SUBSCRIPTION.SUSPENDED": "past_due",
@@ -333,7 +336,11 @@ class PayPalProvider(PaymentProviderBase):
 
     @classmethod
     def event_to_subscription_status(cls, event_type: Optional[str]) -> Optional[str]:
-        """Map a PayPal event type to an internal subscription status, or None."""
+        """Map a PayPal event type to an internal subscription status, or None.
+
+        None return means either an unknown event type or an informational event
+        (e.g. BILLING.SUBSCRIPTION.CREATED) that carries no subscription state change.
+        """
         if event_type is None:
             return None
         return _EVENT_TO_STATUS.get(event_type)

@@ -527,13 +527,14 @@ async def test_webhook_expired_sets_expired(
 
 
 # ---------------------------------------------------------------------------
-# POST /api/billing/webhooks/paypal — unresolved (no matching subscription)
+# POST /api/billing/webhooks/paypal — unmatched subscription → failed
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_webhook_unresolved_stored_without_crash(
+async def test_webhook_unresolved_stored_as_failed(
     client: AsyncClient, fresh_engine: Any
 ) -> None:
+    """ACTIVATED for an unknown subscription ID must record processed_status='failed', not crash."""
     async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
         await _seed_plans(s)
 
@@ -563,7 +564,87 @@ async def test_webhook_unresolved_stored_without_crash(
             )
         ).scalar_one_or_none()
     assert evt is not None
-    assert evt.processed_status == "unresolved"
+    assert evt.processed_status == "failed"
+    assert evt.processing_error is not None
+
+
+# ---------------------------------------------------------------------------
+# POST /api/billing/webhooks/paypal — informational event (CREATED) → ignored
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_webhook_created_event_stored_as_ignored(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """BILLING.SUBSCRIPTION.CREATED carries no status change — must record 'ignored' and return 200."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s)
+
+    verify = _verified_result(
+        event_type="BILLING.SUBSCRIPTION.CREATED",
+        event_id="EVT-CREATED-1",
+        resource_id="SUB-NEW-PRE-ACT",
+    )
+    provider = _mock_provider(verify_result=verify)
+
+    with patch("app.routes.billing.get_paypal_provider", return_value=provider):
+        r = await client.post(
+            "/api/billing/webhooks/paypal",
+            content=_webhook_body("BILLING.SUBSCRIPTION.CREATED", "EVT-CREATED-1"),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert r.status_code == 200
+    assert r.json()["status"] == "ignored"
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        evt = (
+            await s.execute(
+                select(PaymentWebhookEvent).where(
+                    PaymentWebhookEvent.external_event_id == "EVT-CREATED-1"
+                )
+            )
+        ).scalar_one_or_none()
+    assert evt is not None
+    assert evt.processed_status == "ignored"
+    assert evt.event_type == "BILLING.SUBSCRIPTION.CREATED"
+
+
+@pytest.mark.asyncio
+async def test_webhook_unknown_event_stored_as_ignored(
+    client: AsyncClient, fresh_engine: Any
+) -> None:
+    """Verified webhooks with unknown event types must record 'ignored' and return 200, not 400."""
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        await _seed_plans(s)
+
+    verify = _verified_result(
+        event_type="CATALOG.PRODUCT.CREATED",  # unrecognised PayPal event
+        event_id="EVT-UNKNOWN-1",
+        resource_id="SOME-RESOURCE",
+    )
+    provider = _mock_provider(verify_result=verify)
+
+    with patch("app.routes.billing.get_paypal_provider", return_value=provider):
+        r = await client.post(
+            "/api/billing/webhooks/paypal",
+            content=_webhook_body("CATALOG.PRODUCT.CREATED", "EVT-UNKNOWN-1"),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert r.status_code == 200
+    assert r.json()["status"] == "ignored"
+
+    async with AsyncSession(fresh_engine, expire_on_commit=False) as s:
+        evt = (
+            await s.execute(
+                select(PaymentWebhookEvent).where(
+                    PaymentWebhookEvent.external_event_id == "EVT-UNKNOWN-1"
+                )
+            )
+        ).scalar_one_or_none()
+    assert evt is not None
+    assert evt.processed_status == "ignored"
 
 
 # ---------------------------------------------------------------------------
@@ -616,6 +697,14 @@ def test_event_to_status_unknown_returns_none() -> None:
 
 def test_event_to_status_none_returns_none() -> None:
     assert PayPalProvider.event_to_subscription_status(None) is None
+
+
+def test_event_to_status_created_returns_none() -> None:
+    assert PayPalProvider.event_to_subscription_status("BILLING.SUBSCRIPTION.CREATED") is None
+
+
+def test_event_to_status_updated_returns_none() -> None:
+    assert PayPalProvider.event_to_subscription_status("BILLING.SUBSCRIPTION.UPDATED") is None
 
 
 # ---------------------------------------------------------------------------
