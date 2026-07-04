@@ -90,10 +90,15 @@ class TrainingFlowResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class SessionStartRequest(BaseModel):
-    region_code: str
+    # Optional in GLOBAL_CONTENT_MODE — defaults to "GLOBAL" sentinel.
+    region_code: Optional[str] = Field(default=None)
+
+    def resolved_region(self) -> str:
+        return self.region_code or "GLOBAL"
 
     def valid_region(self) -> bool:
-        return self.region_code in REGION_CODES
+        rc = self.region_code
+        return rc is None or rc == "GLOBAL" or rc in REGION_CODES
 
 
 class SessionStartResponse(BaseModel):
@@ -141,7 +146,8 @@ class SessionSubmitResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class LearnerAttemptCreate(BaseModel):
-    region_code: str
+    # Optional in GLOBAL_CONTENT_MODE — defaults to "GLOBAL" sentinel.
+    region_code: Optional[str] = Field(default=None)
     attempt_type: Optional[str] = Field(default=None, max_length=50)
     learner_response: Optional[str] = Field(default=None, max_length=5000)
     selected_action: Optional[str] = Field(default=None, max_length=500)
@@ -156,7 +162,8 @@ class LearnerAttemptCreate(BaseModel):
     documentation_completed: Optional[bool] = None
 
     def valid_region(self) -> bool:
-        return self.region_code in REGION_CODES
+        rc = self.region_code
+        return rc is None or rc == "GLOBAL" or rc in REGION_CODES
 
 
 class LearnerAttemptResult(BaseModel):

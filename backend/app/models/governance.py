@@ -50,6 +50,7 @@ EVIDENCE_STATUSES = frozenset({
 PUBLICATION_STATUSES = frozenset({"published", "unpublished", "rolled_back"})
 
 REGION_CODES = frozenset({"UK", "US", "GCC", "AU"})
+GLOBAL_SENTINEL = "GLOBAL"
 
 
 # ---------------------------------------------------------------------------

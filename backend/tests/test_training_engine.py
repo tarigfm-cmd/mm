@@ -214,15 +214,17 @@ async def test_training_flow_blocks_unpublished_content(client, fresh_engine):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_training_flow_wrong_region_404(client, fresh_engine):
+async def test_training_flow_global_mode_ignores_region(client, fresh_engine):
+    """In global content mode training flow is accessible regardless of region."""
     token = await _register_and_login(client, _ENG_A)
     item_id, _ = await _make_published_item(fresh_engine, content_type="case", region_code="UK")
+    # No region_code param — must succeed in global mode
     r = await client.get(
         f"/api/learn/content/{item_id}/training-flow",
-        params={"region_code": "AU"},
         headers=_auth(token),
     )
-    assert r.status_code == 404
+    assert r.status_code == 200
+    assert r.json()["content_type"] == "case"
 
 
 # ---------------------------------------------------------------------------
@@ -656,15 +658,16 @@ async def test_dimension_feedback_returned_on_submit(client, fresh_engine):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_training_flow_invalid_region_code_422(client, fresh_engine):
+async def test_training_flow_no_region_succeeds_in_global_mode(client, fresh_engine):
+    """In global content mode training flow succeeds with no region_code (not 422)."""
     token = await _register_and_login(client, _ENG_A)
     item_id, _ = await _make_published_item(fresh_engine, content_type="case")
     r = await client.get(
         f"/api/learn/content/{item_id}/training-flow",
-        params={"region_code": "ZZ"},
         headers=_auth(token),
     )
-    assert r.status_code == 422
+    assert r.status_code == 200
+    assert "steps" in r.json()
 
 
 # ---------------------------------------------------------------------------
@@ -672,15 +675,17 @@ async def test_training_flow_invalid_region_code_422(client, fresh_engine):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_session_start_invalid_region_code_422(client, fresh_engine):
+async def test_session_start_no_region_succeeds_in_global_mode(client, fresh_engine):
+    """In global content mode session start succeeds with no region_code (not 422)."""
     token = await _register_and_login(client, _ENG_A)
     item_id, _ = await _make_published_item(fresh_engine, content_type="case")
     r = await client.post(
         f"/api/learn/content/{item_id}/sessions",
-        json={"region_code": "INVALID"},
+        json={},
         headers=_auth(token),
     )
-    assert r.status_code == 422
+    assert r.status_code == 201
+    assert r.json()["status"] == "started"
 
 
 # ---------------------------------------------------------------------------

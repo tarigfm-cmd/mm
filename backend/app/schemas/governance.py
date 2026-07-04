@@ -524,3 +524,10 @@ class RegionPublishingRuleUpdate(BaseModel):
             if bad:
                 raise ValueError(f"Invalid statuses: {bad}. Must be in {sorted(CONTENT_STATUSES)}")
         return v
+
+
+class PublishAllResult(BaseModel):
+    published: int
+    skipped_already_published: int
+    skipped_no_version: int
+    total_now_published: int

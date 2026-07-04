@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useParams, useSearchParams, Link } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import {
   ArrowLeftIcon,
@@ -136,8 +136,6 @@ function StepInputs({
 
 export default function TrainingDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const [searchParams] = useSearchParams()
-  const regionCode = searchParams.get('region') ?? 'UK'
 
   const [item, setItem] = useState<LearnableContentDetail | null>(null)
   const [flow, setFlow] = useState<TrainingFlowResponse | null>(null)
@@ -163,23 +161,23 @@ export default function TrainingDetailPage() {
     if (!id) return
     setPageLoading(true)
     Promise.all([
-      learnApi.getDetail(id, regionCode),
-      learnApi.getTrainingFlow(id, regionCode),
+      learnApi.getDetail(id),
+      learnApi.getTrainingFlow(id),
     ])
       .then(([detail, flowData]) => {
         setItem(detail)
         setFlow(flowData)
       })
-      .catch(() => setError('Content not found or not published for this region.'))
+      .catch(() => setError('Content not found or not published.'))
       .finally(() => setPageLoading(false))
-  }, [id, regionCode])
+  }, [id])
 
   const handleStart = async () => {
     if (!id) return
     setStarting(true)
     startedAt.current = Date.now()
     try {
-      const sess = await learnApi.startSession(id, regionCode)
+      const sess = await learnApi.startSession(id)
       setSession(sess)
       setCurrentStepIdx(0)
     } catch (err) {
@@ -269,9 +267,6 @@ export default function TrainingDetailPage() {
               Level {item.difficulty}
             </span>
           )}
-          <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-primary-50 text-primary-600">
-            {regionCode}
-          </span>
           <span className="text-xs text-gray-400 ml-auto">v{item.version_number}</span>
         </div>
         <h1 className="text-xl font-bold text-gray-900">{item.title}</h1>
