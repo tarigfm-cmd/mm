@@ -10,6 +10,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.core.dependencies import (
     get_current_user,
     has_permission,
@@ -20,6 +21,7 @@ from app.database import get_db
 from app.models.governance import (
     CONTENT_TYPES,
     CONTENT_STATUSES,
+    GLOBAL_SENTINEL,
     REGION_CODES,
     ApprovalBatch,
     ClinicalReview,
@@ -48,6 +50,7 @@ from app.schemas.governance import (
     ImportBatchListResponse,
     ImportBatchRead,
     PublicationRecordRead,
+    PublishAllResult,
     PublishRequest,
     RegionPublishingRuleCreate,
     RegionPublishingRuleRead,
@@ -745,6 +748,108 @@ async def import_commit(
             status_code=422,
             detail=f"Import commit failed — database error. Details: {str(exc)[:400]}",
         )
+
+
+# ---------------------------------------------------------------------------
+# Publish All — global content mode bulk-publish
+# ---------------------------------------------------------------------------
+
+
+@router.post("/publish-all", response_model=PublishAllResult, status_code=status.HTTP_200_OK)
+async def publish_all_content(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_permission("content.publish")),
+) -> PublishAllResult:
+    """Publish every pending_review item with a version as a single global publication.
+
+    - Requires content.publish permission.
+    - Idempotent: already-published items are skipped.
+    - Transaction-safe: all-or-nothing; rolls back on any error.
+    - Each item gets a PublicationRecord with region_code=GLOBAL_SENTINEL.
+    - Sets item.status = "published" on each newly published item.
+    """
+    now = datetime.now(timezone.utc)
+
+    eligible_rows = (
+        await db.execute(
+            select(ContentItem.id, ContentItem.current_version_id)
+            .where(
+                ContentItem.status == "pending_review",
+                ContentItem.current_version_id.isnot(None),
+            )
+        )
+    ).all()
+
+    already_published_ids: set[uuid.UUID] = {
+        row.content_item_id
+        for row in (
+            await db.execute(
+                select(PublicationRecord.content_item_id)
+                .where(PublicationRecord.publication_status == "published")
+                .distinct()
+            )
+        ).all()
+    }
+
+    newly_published = 0
+    skipped_already = 0
+    skipped_no_version = 0
+
+    try:
+        for row in eligible_rows:
+            if row.id in already_published_ids:
+                skipped_already += 1
+                continue
+            if row.current_version_id is None:
+                skipped_no_version += 1
+                continue
+
+            pub = PublicationRecord(
+                content_item_id=row.id,
+                content_version_id=row.current_version_id,
+                region_code=GLOBAL_SENTINEL,
+                published_by=current_user.id,
+                published_at=now,
+                publication_status="published",
+            )
+            db.add(pub)
+
+            await db.execute(
+                update(ContentItem)
+                .where(ContentItem.id == row.id)
+                .values(status="published", updated_at=now)
+            )
+            newly_published += 1
+
+        await log_action(
+            db,
+            action="content.publish_all",
+            actor_user_id=current_user.id,
+            resource_type="content_item",
+            details={"published": newly_published, "skipped_already": skipped_already},
+        )
+        await db.commit()
+    except (IntegrityError, SQLAlchemyError) as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Bulk publish failed and was rolled back: {exc}",
+        )
+
+    total_published = (
+        await db.scalar(
+            select(func.count(PublicationRecord.id)).where(
+                PublicationRecord.publication_status == "published"
+            )
+        )
+    ) or 0
+
+    return PublishAllResult(
+        published=newly_published,
+        skipped_already_published=skipped_already,
+        skipped_no_version=skipped_no_version,
+        total_now_published=total_published,
+    )
 
 
 # ---------------------------------------------------------------------------

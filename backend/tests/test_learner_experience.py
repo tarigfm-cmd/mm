@@ -154,16 +154,17 @@ async def test_browse_returns_only_published(client: AsyncClient, fresh_engine):
 
 
 @pytest.mark.asyncio
-async def test_browse_region_filter(client: AsyncClient, fresh_engine):
-    """UK published items do not appear when browsing US."""
+async def test_browse_global_mode_shows_all_published(client: AsyncClient, fresh_engine):
+    """In global content mode all published items appear regardless of region."""
     token = await _register_and_login(client, _LEARNER_A)
 
     await _create_published_item(fresh_engine, title="UK Only", region_code="UK")
 
-    r = await client.get("/api/learn/content", params={"region_code": "US"}, headers=_auth(token))
+    # No region_code needed in global mode — item must still appear
+    r = await client.get("/api/learn/content", headers=_auth(token))
     assert r.status_code == 200
     titles = [i["title"] for i in r.json()["items"]]
-    assert "UK Only" not in titles
+    assert "UK Only" in titles
 
 
 @pytest.mark.asyncio
@@ -253,12 +254,12 @@ async def test_browse_includes_version_id(client: AsyncClient, fresh_engine):
 
 
 @pytest.mark.asyncio
-async def test_browse_invalid_region_422(client: AsyncClient, fresh_engine):
+async def test_browse_no_region_returns_200_in_global_mode(client: AsyncClient, fresh_engine):
+    """In global content mode omitting region_code returns 200 (not 422)."""
     token = await _register_and_login(client, _LEARNER_A)
-    r = await client.get(
-        "/api/learn/content", params={"region_code": "INVALID"}, headers=_auth(token)
-    )
-    assert r.status_code == 422
+    r = await client.get("/api/learn/content", headers=_auth(token))
+    assert r.status_code == 200
+    assert "items" in r.json()
 
 
 @pytest.mark.asyncio
@@ -310,17 +311,19 @@ async def test_detail_404_for_unpublished(client: AsyncClient, fresh_engine):
 
 
 @pytest.mark.asyncio
-async def test_detail_404_wrong_region(client: AsyncClient, fresh_engine):
+async def test_detail_global_mode_region_ignored(client: AsyncClient, fresh_engine):
+    """In global content mode any published item is accessible regardless of region."""
     token = await _register_and_login(client, _LEARNER_A)
 
     item_id, _, _ = await _create_published_item(fresh_engine, region_code="UK")
 
+    # No region_code needed — item must be found in global mode
     r = await client.get(
         f"/api/learn/content/{item_id}",
-        params={"region_code": "US"},
         headers=_auth(token),
     )
-    assert r.status_code == 404
+    assert r.status_code == 200
+    assert r.json()["id"] == str(item_id)
 
 
 @pytest.mark.asyncio
@@ -513,16 +516,17 @@ async def test_attempt_records_failure_dimensions(client: AsyncClient, fresh_eng
 
 
 @pytest.mark.asyncio
-async def test_attempt_invalid_region_422(client: AsyncClient, fresh_engine):
+async def test_attempt_no_region_succeeds_in_global_mode(client: AsyncClient, fresh_engine):
+    """In global content mode omitting region_code in an attempt succeeds (not 422)."""
     token = await _register_and_login(client, _LEARNER_A)
     item_id, _, _ = await _create_published_item(fresh_engine)
 
     r = await client.post(
         f"/api/learn/content/{item_id}/attempt",
-        json={"region_code": "INVALID"},
+        json={},
         headers=_auth(token),
     )
-    assert r.status_code == 422
+    assert r.status_code == 201
 
 
 # ===========================================================================
@@ -642,27 +646,25 @@ async def test_browse_pending_review_hidden_from_learner(client: AsyncClient, fr
 
 
 @pytest.mark.asyncio
-async def test_browse_published_content_appears_for_correct_region(
+async def test_browse_published_content_appears_in_global_mode(
     client: AsyncClient, fresh_engine
 ):
-    """Published content must appear for the correct region and be absent for others."""
+    """In global content mode published content appears regardless of any region_code param."""
     token = await _register_and_login(client, _LEARNER_A)
 
     await _create_published_item(fresh_engine, title="UK Published", region_code="UK")
 
-    # Correct region — item must appear
-    r_uk = await client.get(
-        "/api/learn/content", params={"region_code": "UK"}, headers=_auth(token)
-    )
-    assert r_uk.status_code == 200
-    assert any(i["title"] == "UK Published" for i in r_uk.json()["items"])
+    # No region_code — must appear
+    r_no_region = await client.get("/api/learn/content", headers=_auth(token))
+    assert r_no_region.status_code == 200
+    assert any(i["title"] == "UK Published" for i in r_no_region.json()["items"])
 
-    # Wrong region — item must not appear
-    r_us = await client.get(
+    # Any region_code parameter is accepted and item still appears (global mode ignores it)
+    r_any = await client.get(
         "/api/learn/content", params={"region_code": "US"}, headers=_auth(token)
     )
-    assert r_us.status_code == 200
-    assert not any(i["title"] == "UK Published" for i in r_us.json()["items"])
+    assert r_any.status_code == 200
+    assert any(i["title"] == "UK Published" for i in r_any.json()["items"])
 
 
 @pytest.mark.asyncio

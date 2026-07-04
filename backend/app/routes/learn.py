@@ -14,14 +14,16 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import cast, func, or_, select
+from sqlalchemy import and_, cast, func, or_, select
 from sqlalchemy import Integer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.core.dependencies import get_current_user
 from app.database import get_db
 from app.models.governance import (
     CONTENT_TYPES,
+    GLOBAL_SENTINEL,
     REGION_CODES,
     ContentItem,
     ContentVersion,
@@ -103,13 +105,15 @@ async def _get_active_publication(
     region_code: str,
     db: AsyncSession,
 ) -> PublicationRecord | None:
+    where = [
+        PublicationRecord.content_item_id == item_id,
+        PublicationRecord.publication_status == "published",
+    ]
+    if not get_settings().global_content_mode:
+        where.append(PublicationRecord.region_code == region_code)
     result = await db.execute(
         select(PublicationRecord)
-        .where(
-            PublicationRecord.content_item_id == item_id,
-            PublicationRecord.region_code == region_code,
-            PublicationRecord.publication_status == "published",
-        )
+        .where(*where)
         .order_by(PublicationRecord.published_at.desc())
         .limit(1)
     )
@@ -148,6 +152,13 @@ async def _fetch_published_row(
     db: AsyncSession,
 ):
     """Single join for published item + version. Returns row or None."""
+    where = [
+        ContentItem.id == item_id,
+        PublicationRecord.publication_status == "published",
+        ContentItem.status == "published",
+    ]
+    if not get_settings().global_content_mode:
+        where.append(PublicationRecord.region_code == region_code)
     result = await db.execute(
         select(
             ContentItem.id,
@@ -159,12 +170,8 @@ async def _fetch_published_row(
         )
         .join(PublicationRecord, PublicationRecord.content_item_id == ContentItem.id)
         .join(ContentVersion, ContentVersion.id == PublicationRecord.content_version_id)
-        .where(
-            ContentItem.id == item_id,
-            PublicationRecord.region_code == region_code,
-            PublicationRecord.publication_status == "published",
-            ContentItem.status == "published",
-        )
+        .where(*where)
+        .order_by(PublicationRecord.published_at.desc())
         .limit(1)
     )
     return result.one_or_none()
@@ -176,7 +183,7 @@ async def _fetch_published_row(
 
 @router.get("/content", response_model=LearnableContentListResponse)
 async def browse_published_content(
-    region_code: str = Query(..., description="Region: UK, US, GCC, AU"),
+    region_code: Optional[str] = Query(None, description="Region filter (ignored in global content mode)"),
     content_type: Optional[str] = Query(None),
     domain: Optional[str] = Query(None),
     difficulty: Optional[str] = Query(None),
@@ -186,32 +193,43 @@ async def browse_published_content(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LearnableContentListResponse:
-    if region_code not in REGION_CODES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"region_code must be one of {sorted(REGION_CODES)}",
-        )
+    settings = get_settings()
+
+    # In regional mode region_code is required and must be a known code
+    if not settings.global_content_mode:
+        if not region_code or region_code not in REGION_CODES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"region_code must be one of {sorted(REGION_CODES)}",
+            )
     if content_type and content_type not in CONTENT_TYPES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"content_type must be one of {sorted(CONTENT_TYPES)}",
         )
 
-    # Subquery: for each content item, pick the timestamp of its latest published record
-    # in this region. This replaces DISTINCT ON (content_item.id) which is PostgreSQL-only
-    # and would fail when ORDER BY doesn't start with the DISTINCT ON column.
+    # Subquery: latest published_at per item (avoids DISTINCT ON ordering conflicts)
+    pub_where = [PublicationRecord.publication_status == "published"]
+    if not settings.global_content_mode and region_code:
+        pub_where.append(PublicationRecord.region_code == region_code)
+
     latest_pub = (
         select(
             PublicationRecord.content_item_id,
             func.max(PublicationRecord.published_at).label("published_at"),
         )
-        .where(
-            PublicationRecord.region_code == region_code,
-            PublicationRecord.publication_status == "published",
-        )
+        .where(*pub_where)
         .group_by(PublicationRecord.content_item_id)
         .subquery("latest_pub")
     )
+
+    pub_join_cond = and_(
+        PublicationRecord.content_item_id == ContentItem.id,
+        PublicationRecord.published_at == latest_pub.c.published_at,
+        PublicationRecord.publication_status == "published",
+    )
+    if not settings.global_content_mode and region_code:
+        pub_join_cond = and_(pub_join_cond, PublicationRecord.region_code == region_code)
 
     q = (
         select(
@@ -228,13 +246,7 @@ async def browse_published_content(
             ContentVersion.version_number,
         )
         .join(latest_pub, latest_pub.c.content_item_id == ContentItem.id)
-        .join(
-            PublicationRecord,
-            (PublicationRecord.content_item_id == ContentItem.id)
-            & (PublicationRecord.published_at == latest_pub.c.published_at)
-            & (PublicationRecord.region_code == region_code)
-            & (PublicationRecord.publication_status == "published"),
-        )
+        .join(PublicationRecord, pub_join_cond)
         .join(ContentVersion, ContentVersion.id == PublicationRecord.content_version_id)
         .where(ContentItem.status == "published")
     )
@@ -293,15 +305,25 @@ async def browse_published_content(
 @router.get("/content/{item_id}", response_model=LearnableContentDetail)
 async def get_published_content_detail(
     item_id: uuid.UUID,
-    region_code: str = Query(...),
+    region_code: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LearnableContentDetail:
-    if region_code not in REGION_CODES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"region_code must be one of {sorted(REGION_CODES)}",
-        )
+    settings = get_settings()
+    if not settings.global_content_mode:
+        if not region_code or region_code not in REGION_CODES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"region_code must be one of {sorted(REGION_CODES)}",
+            )
+
+    where = [
+        ContentItem.id == item_id,
+        PublicationRecord.publication_status == "published",
+        ContentItem.status == "published",
+    ]
+    if not settings.global_content_mode and region_code:
+        where.append(PublicationRecord.region_code == region_code)
 
     result = await db.execute(
         select(
@@ -322,20 +344,17 @@ async def get_published_content_detail(
         )
         .join(PublicationRecord, PublicationRecord.content_item_id == ContentItem.id)
         .join(ContentVersion, ContentVersion.id == PublicationRecord.content_version_id)
-        .where(
-            ContentItem.id == item_id,
-            PublicationRecord.region_code == region_code,
-            PublicationRecord.publication_status == "published",
-            ContentItem.status == "published",
-        )
+        .where(*where)
+        .order_by(PublicationRecord.published_at.desc())
         .limit(1)
     )
     row = result.one_or_none()
     if row is None:
-        raise HTTPException(status_code=404, detail="Content not found or not published for this region.")
+        raise HTTPException(status_code=404, detail="Content not found or not published.")
 
+    effective_region = region_code or GLOBAL_SENTINEL
     requires_disclaimer, requires_protocol = await _get_region_rule_flags(
-        region_code, row.content_type, db
+        effective_region, row.content_type, db
     )
 
     return LearnableContentDetail(
@@ -365,7 +384,7 @@ async def get_published_content_detail(
 @router.get("/content/{item_id}/training-flow", response_model=TrainingFlowResponse)
 async def get_training_flow(
     item_id: uuid.UUID,
-    region_code: str = Query(...),
+    region_code: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> TrainingFlowResponse:
@@ -374,15 +393,18 @@ async def get_training_flow(
     Hidden fields (answer keys, rubrics, risk info) are NEVER included.
     Reveal fields appear only in the session submit response.
     """
-    if region_code not in REGION_CODES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"region_code must be one of {sorted(REGION_CODES)}",
-        )
+    settings = get_settings()
+    if not settings.global_content_mode:
+        if not region_code or region_code not in REGION_CODES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"region_code must be one of {sorted(REGION_CODES)}",
+            )
 
-    row = await _fetch_published_row(item_id, region_code, db)
+    effective_region = region_code or GLOBAL_SENTINEL
+    row = await _fetch_published_row(item_id, effective_region, db)
     if row is None:
-        raise HTTPException(status_code=404, detail="Content not found or not published for this region.")
+        raise HTTPException(status_code=404, detail="Content not found or not published.")
 
     payload = row.payload_json or {}
     steps_data = build_training_flow(row.content_type, payload)
@@ -428,7 +450,8 @@ async def start_training_session(
     Uses the currently published version.
     Does not expose hidden fields.
     """
-    if body.region_code not in REGION_CODES:
+    settings = get_settings()
+    if not settings.global_content_mode and not body.valid_region():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"region_code must be one of {sorted(REGION_CODES)}",
@@ -441,9 +464,10 @@ async def start_training_session(
     if not allowed:
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=reason)
 
-    row = await _fetch_published_row(item_id, body.region_code, db)
+    effective_region = body.resolved_region()
+    row = await _fetch_published_row(item_id, effective_region, db)
     if row is None:
-        raise HTTPException(status_code=404, detail="Content not found or not published for this region.")
+        raise HTTPException(status_code=404, detail="Content not found or not published.")
 
     payload = row.payload_json or {}
     steps_data = build_training_flow(row.content_type, payload)
@@ -453,7 +477,7 @@ async def start_training_session(
         user_id=current_user.id,
         content_item_id=item_id,
         content_version_id=row.content_version_id,
-        region_code=body.region_code,
+        region_code=effective_region,
         status="started",
         current_step=1,
         total_steps=total_steps,
@@ -632,11 +656,21 @@ async def submit_attempt(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LearnerAttemptResult:
-    if body.region_code not in REGION_CODES:
+    settings = get_settings()
+    if not settings.global_content_mode and not body.valid_region():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"region_code must be one of {sorted(REGION_CODES)}",
         )
+
+    effective_region = body.region_code or GLOBAL_SENTINEL
+    where = [
+        ContentItem.id == item_id,
+        PublicationRecord.publication_status == "published",
+        ContentItem.status == "published",
+    ]
+    if not settings.global_content_mode:
+        where.append(PublicationRecord.region_code == effective_region)
 
     result = await db.execute(
         select(
@@ -647,17 +681,13 @@ async def submit_attempt(
         )
         .join(PublicationRecord, PublicationRecord.content_item_id == ContentItem.id)
         .join(ContentVersion, ContentVersion.id == PublicationRecord.content_version_id)
-        .where(
-            ContentItem.id == item_id,
-            PublicationRecord.region_code == body.region_code,
-            PublicationRecord.publication_status == "published",
-            ContentItem.status == "published",
-        )
+        .where(*where)
+        .order_by(PublicationRecord.published_at.desc())
         .limit(1)
     )
     row = result.one_or_none()
     if row is None:
-        raise HTTPException(status_code=404, detail="Content not found or not published for this region.")
+        raise HTTPException(status_code=404, detail="Content not found or not published.")
 
     score, feedback, failed_dims = _score_attempt(row.content_type, row.payload_json, body)
 
@@ -672,7 +702,7 @@ async def submit_attempt(
         content_item_id=item_id,
         content_version_id=row.content_version_id,
         user_id=current_user.id,
-        region_code=body.region_code,
+        region_code=effective_region,
         attempt_type=body.attempt_type,
         score=score,
         failed_red_flag=failed_red_flag,

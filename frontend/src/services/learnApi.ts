@@ -76,7 +76,7 @@ learnHttp.interceptors.response.use(
 
 export const learnApi = {
   browse: async (params: {
-    region_code: string
+    region_code?: string
     content_type?: string
     domain?: string
     difficulty?: string
@@ -88,25 +88,26 @@ export const learnApi = {
     return data
   },
 
-  getDetail: async (id: string, regionCode: string): Promise<LearnableContentDetail> => {
-    const { data } = await learnHttp.get<LearnableContentDetail>(`/api/learn/content/${id}`, {
-      params: { region_code: regionCode },
-    })
+  getDetail: async (id: string, regionCode?: string): Promise<LearnableContentDetail> => {
+    const params = regionCode ? { region_code: regionCode } : undefined
+    const { data } = await learnHttp.get<LearnableContentDetail>(`/api/learn/content/${id}`, { params })
     return data
   },
 
-  getTrainingFlow: async (id: string, regionCode: string): Promise<TrainingFlowResponse> => {
+  getTrainingFlow: async (id: string, regionCode?: string): Promise<TrainingFlowResponse> => {
+    const params = regionCode ? { region_code: regionCode } : undefined
     const { data } = await learnHttp.get<TrainingFlowResponse>(
       `/api/learn/content/${id}/training-flow`,
-      { params: { region_code: regionCode } },
+      { params },
     )
     return data
   },
 
-  startSession: async (id: string, regionCode: string): Promise<SessionStartResponse> => {
+  startSession: async (id: string, regionCode?: string): Promise<SessionStartResponse> => {
+    const body = regionCode ? { region_code: regionCode } : {}
     const { data } = await learnHttp.post<SessionStartResponse>(
       `/api/learn/content/${id}/sessions`,
-      { region_code: regionCode },
+      body,
     )
     return data
   },

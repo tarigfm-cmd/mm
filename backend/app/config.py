@@ -92,6 +92,12 @@ class Settings(BaseSettings):
     # Public URL for return/cancel redirects (e.g. https://app.pharmlearn.dev)
     app_public_url: str = "http://localhost:5173"
 
+    # ── Content Mode ──────────────────────────────────────────────────────────
+    # When True, regional restrictions are bypassed and all published content
+    # is served as a single global library.  Set to False to restore per-region
+    # filtering (UK / US / GCC / AU).  No schema changes required to toggle.
+    global_content_mode: bool = True
+
     # ── Monitoring ────────────────────────────────────────────────────────────
     sentry_dsn: str = ""
 

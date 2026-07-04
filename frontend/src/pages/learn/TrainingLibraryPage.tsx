@@ -11,7 +11,6 @@ import {
 import { learnApi } from '@/services/learnApi'
 import type { LearnableContentItem } from '@/types/learn'
 
-const REGION_CODES = ['UK', 'US', 'GCC', 'AU']
 const CONTENT_TYPES = [
   '', 'case', 'simulation', 'osce_station', 'prescription_screening', 'drill', 'game',
 ]
@@ -35,7 +34,7 @@ const DIFF_COLOR: Record<string, string> = {
   '5': 'bg-red-50 text-red-700',
 }
 
-function ContentCard({ item, region }: { item: LearnableContentItem; region: string }) {
+function ContentCard({ item }: { item: LearnableContentItem }) {
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col gap-3 hover:border-primary-300 hover:shadow-sm transition-all">
       <div className="flex items-start justify-between gap-2">
@@ -70,7 +69,7 @@ function ContentCard({ item, region }: { item: LearnableContentItem; region: str
           Published {new Date(item.published_at).toLocaleDateString()}
         </span>
         <Link
-          to={`/learn/content/${item.id}?region=${region}`}
+          to={`/learn/content/${item.id}`}
           className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
         >
           <AcademicCapIcon className="w-3.5 h-3.5" />
@@ -83,7 +82,6 @@ function ContentCard({ item, region }: { item: LearnableContentItem; region: str
 
 export default function TrainingLibraryPage() {
   const [searchParams] = useSearchParams()
-  const [region, setRegion] = useState<string>('UK')
   const [contentType, setContentType] = useState(searchParams.get('content_type') ?? '')
   const [difficulty, setDifficulty] = useState('')
   const [domain, setDomain] = useState('')
@@ -101,7 +99,6 @@ export default function TrainingLibraryPage() {
     setLoading(true)
     try {
       const res = await learnApi.browse({
-        region_code: region,
         content_type: contentType || undefined,
         domain: domain.trim() || undefined,
         difficulty: difficulty || undefined,
@@ -117,12 +114,12 @@ export default function TrainingLibraryPage() {
     } finally {
       setLoading(false)
     }
-  }, [region, contentType, domain, difficulty, search])
+  }, [contentType, domain, difficulty, search])
 
   useEffect(() => {
     setPage(1)
     load(1)
-  }, [region, contentType, difficulty]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [contentType, difficulty]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // Skip initial mount — the filter effect above already called load(1).
@@ -146,23 +143,8 @@ export default function TrainingLibraryPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Training Library</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Browse published, clinically-approved training content for your region.
+          Browse published, clinically-approved training content.
         </p>
-      </div>
-
-      {/* Region selector */}
-      <div className="flex items-center gap-1.5 p-1 bg-gray-100 rounded-xl w-fit">
-        {REGION_CODES.map((r) => (
-          <button
-            key={r}
-            onClick={() => setRegion(r)}
-            className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
-              region === r ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {r}
-          </button>
-        ))}
       </div>
 
       {/* Filters */}
@@ -229,7 +211,7 @@ export default function TrainingLibraryPage() {
       {!loading && items.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 bg-gray-50 rounded-xl border border-dashed border-gray-300">
           <BookOpenIcon className="w-12 h-12 text-gray-300 mb-3" />
-          <p className="text-sm font-medium text-gray-500">No published content for {region}</p>
+          <p className="text-sm font-medium text-gray-500">No published learning content is available yet.</p>
           <p className="text-xs text-gray-400 mt-1 text-center max-w-xs">
             Content must be reviewed, approved, and published by an administrator before it appears here.
           </p>
@@ -250,7 +232,7 @@ export default function TrainingLibraryPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {items.map((item) => (
-            <ContentCard key={item.id} item={item} region={region} />
+            <ContentCard key={item.id} item={item} />
           ))}
         </div>
       )}
